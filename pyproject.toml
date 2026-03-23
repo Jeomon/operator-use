@@ -1,6 +1,6 @@
 [project]
 name = "operator-use"
-version = "0.2.7"
+version = "0.2.8"
 description = "A personal assistant that operates your computer. Just like you."
 readme = "README.md"
 requires-python = ">=3.12"
