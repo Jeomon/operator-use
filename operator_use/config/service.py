@@ -1,0 +1,271 @@
+"""Centralized configuration schema for Operator, inspired by nanobot."""
+
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic.alias_generators import to_camel
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Base(BaseModel):
+    """Base model that accepts both camelCase and snake_case keys."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+
+class TelegramConfig(Base):
+    """Telegram channel configuration."""
+
+    enabled: bool = False
+    token: str = ""  # Bot token from @BotFather
+    account_id: str = ""  # Internal routing ID (set automatically for per-agent bots)
+    allow_from: List[str] = Field(default_factory=list)  # Allowed user IDs or usernames
+    use_webhook: bool = False
+    webhook_url: str = ""
+    webhook_path: str = "/telegram"
+    webhook_port: int = 8080
+    proxy: Optional[str] = None  # HTTP/SOCKS5 proxy URL
+    reply_to_message: bool = True  # If true, bot replies quote the original message
+    media_dir: Optional[str] = None
+
+
+class DiscordConfig(Base):
+    """Discord channel configuration."""
+
+    enabled: bool = False
+    token: str = ""  # Bot token from Discord Developer Portal
+    account_id: str = ""  # Internal routing ID (set automatically for per-agent bots)
+    allow_from: List[str] = Field(default_factory=list)  # Allowed user IDs
+    reply_to_message: bool = True  # If true, bot replies quote the original message
+    use_webhook: bool = False  # Use webhook mode instead of WebSocket
+    webhook_url: str = ""  # Webhook URL for receiving events
+    webhook_path: str = "/discord"  # Webhook path
+    webhook_port: int = 8080  # Webhook server port
+    media_dir: Optional[str] = None
+
+
+class SlackConfig(Base):
+    """Slack channel configuration (DM mode)."""
+
+    enabled: bool = False
+    bot_token: str = ""  # Bot User OAuth Token (xoxb-...)
+    account_id: str = ""  # Internal routing ID (set automatically for per-agent bots)
+    app_token: str = ""  # App-Level Token (xapp-..., for Socket Mode)
+    use_webhook: bool = False  # Use webhook mode instead of Socket Mode
+    webhook_url: str = ""  # Public URL for Slack Request URL
+    webhook_path: str = "/slack"  # Webhook path
+    webhook_port: int = 8080  # Webhook server port
+    signing_secret: str = ""  # Slack signing secret for request verification
+    reply_to_message: bool = True  # If true, bot replies to the original message
+    allow_from: List[str] = Field(default_factory=list)  # Allowed user IDs
+
+
+class TwitchConfig(Base):
+    """Twitch channel configuration."""
+
+    enabled: bool = False
+    token: str = ""           # OAuth token (oauth:xxxx or raw token)
+    nick: str = ""            # Bot's Twitch username
+    channel_name: str = ""    # Channel to join (without #)
+    account_id: str = ""      # Internal routing ID (set automatically for per-agent bots)
+    allow_from: List[str] = Field(default_factory=list)  # Allowed Twitch usernames
+    prefix: str = "!"         # Command prefix for twitchio
+
+
+class ChannelsConfig(Base):
+    """Configuration for chat channels."""
+
+    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    discord: DiscordConfig = Field(default_factory=DiscordConfig)
+    slack: SlackConfig = Field(default_factory=SlackConfig)
+    twitch: TwitchConfig = Field(default_factory=TwitchConfig)
+
+
+class LLMConfig(Base):
+    """LLM configuration."""
+
+    provider: str = "openai"
+    model: str = "gpt-4o"
+
+
+class STTConfig(Base):
+    """Speech-to-Text configuration."""
+
+    enabled: bool = False
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+class TTSConfig(Base):
+    """Text-to-Speech configuration."""
+
+    enabled: bool = False
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    voice: Optional[str] = None
+
+
+class PeerMatch(Base):
+    """Match a specific chat/channel/group within a platform."""
+
+    kind: str = "channel"  # "channel", "group", "direct", "thread"
+    id: str = ""
+
+
+class BindingMatch(Base):
+    """Criteria for matching an incoming message to an agent."""
+
+    channel: str = ""  # Platform name: "telegram", "discord", "slack", etc.
+    peer: Optional[PeerMatch] = None  # Specific chat/channel ID within the platform
+    account_id: Optional[str] = None  # Bot account (for multi-account setups)
+
+
+class AgentRouteBinding(Base):
+    """Routes messages matching `match` to `agent_id`.
+
+    Bindings are evaluated top-down; first match wins.
+    Peer matches are more specific than channel-only matches.
+    """
+
+    agent_id: str = "operator"
+    match: BindingMatch = Field(default_factory=BindingMatch)
+
+
+class AgentDefaults(Base):
+    """Default settings shared across all agents (can be overridden per agent)."""
+
+    max_tool_iterations: int = 40
+    streaming: bool = True
+
+
+class AgentDefinition(Base):
+    """Individual agent definition."""
+
+    id: str
+    workspace: Optional[str] = None  # Defaults to ~/.operator-use/workspaces/<id>
+    llm_config: Optional[LLMConfig] = None  # Overrides agents.defaults.llm_config
+    max_tool_iterations: Optional[int] = None  # Overrides agents.defaults
+    channels: Optional["ChannelsConfig"] = None  # Per-agent dedicated channel bots
+    computer_use: bool = False  # Enable desktop/computer-use (GUI automation)
+    browser_use: bool = True    # Enable browser-use (Chrome DevTools Protocol)
+
+    @model_validator(mode="after")
+    def check_exclusive_use(self) -> "AgentDefinition":
+        if self.computer_use and self.browser_use:
+            raise ValueError(
+                f"Agent '{self.id}': computer_use and browser_use cannot both be enabled. "
+                "Choose one interaction mode per agent."
+            )
+        return self
+
+
+class AgentsConfig(Base):
+    """Multi-agent configuration."""
+
+    defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    list: List[AgentDefinition] = Field(default_factory=list)
+
+
+class ACPAgentEntry(Base):
+    """A pre-approved remote ACP agent the LLM is allowed to call."""
+
+    base_url: str  # e.g. "http://localhost:9000"
+    agent_id: str = ""  # Remote agent ID on the server; empty = auto-discover
+    auth_token: str = ""  # Bearer token for the remote server
+    timeout: float = 120.0
+    description: str = ""  # Human-readable hint shown to the LLM
+
+
+class ACPServerSettings(Base):
+    """Config for exposing Operator itself as an ACP server on the local network."""
+
+    enabled: bool = False
+    host: str = "0.0.0.0"   # "0.0.0.0" = reachable by other machines on the LAN
+    port: int = 8765
+    agent_id: str = "operator"
+    agent_name: str = "Operator"
+    agent_description: str = "Operator AI agent accessible via ACP"
+    auth_token: str = ""     # Optional bearer token to protect the endpoint
+    public_url: str = ""     # Advertised URL for agent discovery (e.g. http://192.168.1.10:8765)
+
+
+class ProviderConfig(Base):
+    """LLM provider configuration (keys, bases)."""
+
+    api_key: str = ""
+    api_base: Optional[str] = None
+
+
+class ProvidersConfig(Base):
+    """Configuration for all LLM providers (to store keys centrally)."""
+
+    openai: ProviderConfig = Field(default_factory=ProviderConfig)
+    anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
+    google: ProviderConfig = Field(default_factory=ProviderConfig)
+    groq: ProviderConfig = Field(default_factory=ProviderConfig)
+    mistral: ProviderConfig = Field(default_factory=ProviderConfig)
+    nvidia: ProviderConfig = Field(default_factory=ProviderConfig)
+    ollama: ProviderConfig = Field(default_factory=ProviderConfig)
+    cerebras: ProviderConfig = Field(default_factory=ProviderConfig)
+    open_router: ProviderConfig = Field(default_factory=ProviderConfig)
+    azure_openai: ProviderConfig = Field(default_factory=ProviderConfig)
+    deepseek: ProviderConfig = Field(default_factory=ProviderConfig)
+    sarvam: ProviderConfig = Field(default_factory=ProviderConfig)
+    codex: ProviderConfig = Field(default_factory=ProviderConfig)
+    claude_code: ProviderConfig = Field(default_factory=ProviderConfig)
+    antigravity: ProviderConfig = Field(default_factory=ProviderConfig)
+    github_copilot: ProviderConfig = Field(default_factory=ProviderConfig)
+
+
+class HeartbeatConfig(Base):
+    """Heartbeat configuration."""
+
+    enabled: bool = False
+    llm_config: Optional[LLMConfig] = None  # Dedicated LLM for heartbeat tasks
+
+
+class Config(BaseSettings):
+    """Root configuration for Operator."""
+
+    agents: AgentsConfig = Field(default_factory=AgentsConfig)
+    bindings: List[AgentRouteBinding] = Field(default_factory=list)
+    stt: STTConfig = Field(default_factory=STTConfig)
+    tts: TTSConfig = Field(default_factory=TTSConfig)
+    providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
+    heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
+    # Named registry of pre-approved remote ACP agents.
+    # The LLM can only call agents listed here — it never supplies raw URLs.
+    acp_agents: Dict[str, ACPAgentEntry] = Field(default_factory=dict)
+    # ACP server — exposes this Operator instance as an ACP agent on the network.
+    acp_server: ACPServerSettings = Field(default_factory=ACPServerSettings)
+
+    model_config = SettingsConfigDict(
+        env_prefix="OPERATOR_",
+        env_nested_delimiter="__",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    @property
+    def default_agent(self) -> AgentDefinition | None:
+        """Return the first agent definition, or None if none are configured."""
+        return self.agents.list[0] if self.agents.list else None
+
+
+def load_config(user_data_dir: Path) -> Config:
+    """Load configuration from .operator_use/config.json and environment."""
+    import json
+
+    path = user_data_dir / "config.json"
+    data = {}
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"Warning: Failed to load config from {path}: {e}")
+
+    # Initialize Config (Pydantic merges JSON data + actual environment variables)
+    return Config(**data)

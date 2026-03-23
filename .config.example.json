@@ -1,0 +1,31 @@
+{
+  "agent": {
+    "streaming": false,
+    "llm": {
+      "provider": "nvidia",
+      "model": "nemotron-nano-12b-instruct-v1:1"
+    },
+    "stt": {
+      "enabled": true,
+      "provider": "sarvam",
+      "model": "saaras:v3"
+    },
+    "tts": {
+      "enabled": true,
+      "provider": "sarvam",
+      "model": "bulbul:v3",
+      "voice": "kavya"
+    }
+  },
+  "providers": {
+    "nvidia": {
+      "api_key": "API_KEY"
+    },
+    "groq": {
+      "api_key": "API_KEY"
+    },
+    "sarvam": {
+      "api_key": "API_KEY"
+    }
+  }
+}

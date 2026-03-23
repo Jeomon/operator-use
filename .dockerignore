@@ -1,0 +1,10 @@
+.venv
+.git
+.env
+__pycache__
+*.pyc
+*.pyo
+dist
+docs
+notebook.ipynb
+future_works
