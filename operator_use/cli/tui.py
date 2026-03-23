@@ -36,10 +36,10 @@ def print_banner():
     console.print(f"               [bold {PRIMARY}]OPERATOR[/bold {PRIMARY}]{ver_str}", justify="left")
     console.print()
 
-def print_start():
+def print_start(title: str = "Initial Setup"):
     ver = _version()
     ver_str = f" [dim]v{ver}[/dim]" if ver else ""
-    console.print(f"┌ [bold {PRIMARY}]Operator[/bold {PRIMARY}]{ver_str} [bold {PRIMARY}]Initial Setup[/bold {PRIMARY}]")
+    console.print(f"┌ [bold {PRIMARY}]Operator[/bold {PRIMARY}]{ver_str} [bold {PRIMARY}]{title}[/bold {PRIMARY}]")
     console.print("│")
 
 def print_step(n: int, total: int, title: str, hint: str = "") -> None:

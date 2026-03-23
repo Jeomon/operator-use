@@ -420,7 +420,7 @@ def run_first_install():
 
 def run_initial_setup():
     print_banner()
-    print_start()
+    print_start("Configure")
 
     from operator_use.paths import get_userdata_dir
     _config_path = get_userdata_dir() / "config.json"
