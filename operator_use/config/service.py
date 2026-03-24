@@ -143,6 +143,7 @@ class AgentDefinition(Base):
     """Individual agent definition."""
 
     id: str
+    description: str = ""  # Short role/capability summary used for delegation and routing hints
     workspace: Optional[str] = None  # Defaults to ~/.operator-use/workspaces/<id>
     llm_config: Optional[LLMConfig] = None  # Overrides agents.defaults.llm_config
     max_tool_iterations: Optional[int] = None  # Overrides agents.defaults

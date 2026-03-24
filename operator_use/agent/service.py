@@ -49,6 +49,8 @@ class Agent:
     def __init__(
         self,
         llm: "BaseChatLLM",
+        agent_id: str = "operator",
+        description: str = "",
         workspace: Path | None = None,
         sessions: SessionStore | None = None,
         max_iterations: int = 100,
@@ -60,6 +62,8 @@ class Agent:
         acp_registry: dict | None = None,
         plugins: "list[Plugin] | None" = None,
     ):
+        self.agent_id = agent_id
+        self.description = description
         if workspace is None:
             from operator_use.paths import get_named_workspace_dir
             workspace = get_named_workspace_dir("operator")
@@ -90,6 +94,7 @@ class Agent:
         self.tool_register.set_extension("_acp_registry", acp_registry or {})
         self.tool_register.set_extension("_llm", self.llm)
         self.tool_register.set_extension("_agent", self)
+        self.tool_register.set_extension("_agent_id", self.agent_id)
 
         # Wire plugins
         self.plugins: "list[Plugin]" = plugins or []

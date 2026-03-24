@@ -96,8 +96,9 @@ def test_tts_config_defaults():
 # --- AgentDefinition ---
 
 def test_agent_definition_valid():
-    a = AgentDefinition(id="my-agent", computer_use=False, browser_use=False)
+    a = AgentDefinition(id="my-agent", description="General purpose manager", computer_use=False, browser_use=False)
     assert a.id == "my-agent"
+    assert a.description == "General purpose manager"
 
 
 def test_agent_definition_computer_use_only():

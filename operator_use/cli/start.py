@@ -201,6 +201,8 @@ def _build_agents(config: Config, cron, gateway, bus) -> dict[str, Agent]:
 
         agents[defn.id] = Agent(
             llm=llm,
+            agent_id=defn.id,
+            description=defn.description,
             workspace=workspace,
             max_iterations=defn.max_tool_iterations or defaults.max_tool_iterations,
             cron=cron,
@@ -209,6 +211,9 @@ def _build_agents(config: Config, cron, gateway, bus) -> dict[str, Agent]:
             acp_registry=config.acp_agents,
             plugins=plugins,
         )
+
+    for agent in agents.values():
+        agent.tool_register.set_extension("_agent_registry", agents)
 
     return agents
 
