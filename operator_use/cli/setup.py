@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from operator_use.cli.tui import BackRequest, print_banner, print_start, print_step, select, text_input, confirm, print_end, print_end_first_install, console
+from operator_use.cli.tui import BackRequest, clear_screen, print_banner, print_start, print_step, select, text_input, confirm, print_end, print_end_first_install, console
 
 # --- Registry Data ---
 
@@ -349,8 +349,16 @@ def _save_config(
 
 def run_first_install():
     """Linear step-by-step wizard for first-time installation (no config.json exists)."""
-    print_banner()
-    print_start()
+    def _render_step(step: int) -> None:
+        clear_screen()
+        print_banner()
+        print_start()
+        if step == 0:
+            print_step(1, 3, "Your agent", "Give your agent a name — used for its workspace folder.")
+        elif step == 1:
+            print_step(2, 3, "Language model", "This is the AI brain. Pick a provider you have access to.")
+        else:
+            print_step(3, 3, "Messaging channel", "Connect a channel to message your agent. You can add more later with `operator channel add`.")
 
     api_keys_dict: dict[str, str] = {}
     agent_id = "operator"
@@ -364,15 +372,14 @@ def run_first_install():
     step = 0
     while step < 3:
         try:
+            _render_step(step)
             if step == 0:
-                print_step(1, 3, "Your agent", "Give your agent a name — used for its workspace folder.")
                 raw = text_input("Name your agent (e.g. mybot, personal, work):", default=agent_id)
                 agent_id = _re.sub(r"[^a-z0-9_-]", "-", raw.strip().lower()) or "operator"
                 step = 1
                 continue
 
             if step == 1:
-                print_step(2, 3, "Language model", "This is the AI brain. Pick a provider you have access to.")
                 prov_name = select("Pick the LLM provider:", list(LLM_PROVIDERS.keys()))
                 prov_key = get_provider_key(prov_name)
                 if prov_name in OAUTH_PROVIDERS:
@@ -385,7 +392,6 @@ def run_first_install():
                 step = 2
                 continue
 
-            print_step(3, 3, "Messaging channel", "Connect a channel to message your agent. You can add more later with `operator channel add`.")
             agent_channels = {"telegram": "", "discord": "", "slack_bot": "", "slack_app": ""}
             ch_name = select("Pick a channel to connect:", ["Telegram", "Discord", "Slack", "Skip for now"])
             if ch_name != "Skip for now":
@@ -433,8 +439,10 @@ def run_first_install():
 
 
 def run_initial_setup():
-    print_banner()
-    print_start("Configure")
+    def _render_configure_screen() -> None:
+        clear_screen()
+        print_banner()
+        print_start("Configure")
 
     from operator_use.paths import get_userdata_dir
     _config_path = get_userdata_dir() / "config.json"
@@ -530,6 +538,7 @@ def run_initial_setup():
     def _agent_submenu(idx: int) -> None:
         while True:
             try:
+                _render_configure_screen()
                 a = agent_defs[idx]
 
                 if a["llm_provider_key"] and a["llm_model"]:
@@ -584,6 +593,7 @@ def run_initial_setup():
                     ch = agent_defs[idx].setdefault("channels", {"telegram": "", "discord": "", "slack_bot": "", "slack_app": ""})
                     while True:
                         try:
+                            _render_configure_screen()
                             tg_label  = "✓ configured" if ch.get("telegram")  else "not set"
                             dc_label  = "✓ configured" if ch.get("discord")   else "not set"
                             sl_label  = "✓ configured" if ch.get("slack_bot") else "not set"
@@ -650,6 +660,7 @@ def run_initial_setup():
     def _agents_menu() -> None:
         while True:
             try:
+                _render_configure_screen()
                 agent_choices = []
                 for a in agent_defs:
                     if a["llm_provider_key"] and a["llm_model"]:
@@ -694,6 +705,7 @@ def run_initial_setup():
     def _acp_menu() -> None:
         while True:
             try:
+                _render_configure_screen()
                 srv_label = f"enabled  port={acp_server.port}" if acp_server.enabled else "disabled"
                 agents_label = f"{len(acp_agents)} registered" if acp_agents else "none"
                 choice = select("ACP (Agent Communication Protocol):", [
@@ -723,6 +735,7 @@ def run_initial_setup():
                 elif choice.startswith("Remote Agents"):
                     while True:
                         try:
+                            _render_configure_screen()
                             agent_choices = [f"{name}  —  {entry.base_url}" for name, entry in acp_agents.items()]
                             agent_choices += ["+ Add agent", "← Back"]
                             sub = select("Remote ACP Agents:", agent_choices)
@@ -761,6 +774,7 @@ def run_initial_setup():
     # --- Main menu loop ---
     while True:
         try:
+            _render_configure_screen()
             stt_label    = f"{stt_provider_key} / {stt_model}" if stt_enabled else "disabled"
             tts_label    = f"{tts_provider_key} / {tts_model}" if tts_enabled else "disabled"
             agents_label = ", ".join(a["id"] for a in agent_defs)
