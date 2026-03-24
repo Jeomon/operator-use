@@ -1,10 +1,13 @@
-﻿from operator_use.tools import Tool,ToolResult,MAX_TOOL_OUTPUT_LENGTH
-from pydantic import BaseModel, Field
-from pathlib import Path
 import asyncio
-import sys
 import os
 import signal
+import sys
+from pathlib import Path
+
+from pydantic import BaseModel, Field
+
+from operator_use.agent.tools.path_guard import PathAccessError, validate_terminal_command
+from operator_use.tools import Tool,ToolResult,MAX_TOOL_OUTPUT_LENGTH
 
 BLOCKED_COMMANDS={
     "rm -rf /",
@@ -23,7 +26,13 @@ BLOCKED_COMMANDS={
     "halt",
     "poweroff",
     "init 0",
-    "init 6"
+    "init 6",
+    ">>",
+    "<<",
+    "|&",
+    "$(",
+    "`",
+    "nohup",
 }
 
 class Terminal(BaseModel):
@@ -39,11 +48,18 @@ def _is_command_blocked(cmd: str) -> str | None:
     return None
 
 
-@Tool(name="terminal",description="Run a shell command and return stdout, stderr, and exit code. Use for git, package installs, running scripts, checking processes, or any CLI task. Commands run from the codebase root. Destructive commands (rm -rf /, format, shutdown, etc.) are blocked. For long outputs, results are truncated — pipe through head/tail if needed.", model=Terminal)
+@Tool(name="terminal",description="Run a shell command and return stdout, stderr, and exit code. Use for git, package installs, running scripts, checking processes, or any CLI task. Commands run from the agent workspace. Destructive commands and workspace escapes are blocked. For long outputs, results are truncated — pipe through head/tail if needed.", model=Terminal)
 async def terminal(cmd: str, timeout: int = 10, **kwargs) -> str:
     blocked = _is_command_blocked(cmd)
     if blocked:
         return ToolResult.error_result(f"Command blocked: contains forbidden pattern '{blocked}'")
+
+    workspace = Path(kwargs.get("_workspace") or Path.cwd()).expanduser().resolve()
+    protected_paths = kwargs.get("_protected_paths")
+    try:
+        cwd = validate_terminal_command(cmd, workspace=workspace, protected_paths=protected_paths)
+    except PathAccessError as e:
+        return ToolResult.error_result(str(e))
 
     env=os.environ.copy()
 
@@ -52,11 +68,9 @@ async def terminal(cmd: str, timeout: int = 10, **kwargs) -> str:
     else:
         shell_cmd = ["/bin/bash", "-c", cmd]
 
-    workspace = Path.cwd()
-    cwd = str(workspace) if workspace.exists() else str(Path.cwd())
     process = await asyncio.create_subprocess_exec(
         *shell_cmd,
-        cwd=cwd,
+        cwd=str(cwd),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=env,
@@ -97,5 +111,6 @@ async def terminal(cmd: str, timeout: int = 10, **kwargs) -> str:
             "exit_code": exit_code,
             "stdout": stdout,
             "stderr": stderr,
+            "cwd": str(cwd),
         }
     )

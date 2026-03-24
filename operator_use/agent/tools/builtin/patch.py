@@ -1,11 +1,17 @@
-﻿"""Patch tool: apply unified diffs to files using difflib for fuzzy matching."""
+"""Patch tool: apply unified diffs to files using difflib for fuzzy matching."""
 
 import difflib
 import re
 
-from operator_use.utils.helper import resolve, is_binary_file
-from operator_use.tools.service import Tool, ToolResult
 from pydantic import BaseModel, Field
+
+from operator_use.agent.tools.path_guard import (
+    PathAccessError,
+    ensure_allowed_path,
+    get_workspace_root,
+)
+from operator_use.tools.service import Tool, ToolResult
+from operator_use.utils.helper import is_binary_file
 
 
 def _parse_unified_diff(patch_content: str) -> list[tuple[int, int, list[str]]]:
@@ -17,7 +23,6 @@ def _parse_unified_diff(patch_content: str) -> list[tuple[int, int, list[str]]]:
     lines = patch_content.splitlines()
     i = 0
 
-    # Skip header until we find a hunk
     while i < len(lines):
         line = lines[i]
         if line.startswith("@@"):
@@ -30,7 +35,6 @@ def _parse_unified_diff(patch_content: str) -> list[tuple[int, int, list[str]]]:
             i += 1
             continue
 
-        # Parse hunk header: @@ -old_start,old_count +new_start,new_count @@
         match = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
         if not match:
             i += 1
@@ -38,7 +42,6 @@ def _parse_unified_diff(patch_content: str) -> list[tuple[int, int, list[str]]]:
 
         old_start = int(match.group(1))
         old_count = int(match.group(2) or 1)
-        # new_start, new_count unused for application
         i += 1
 
         hunk_lines: list[str] = []
@@ -58,29 +61,22 @@ def _parse_unified_diff(patch_content: str) -> list[tuple[int, int, list[str]]]:
 def _extract_old_context(hunk_lines: list[str]) -> list[str]:
     """Extract the 'old' lines (context and removals) from a hunk for matching."""
     return [
-        line[1:]  # strip leading ' ' or '-'
+        line[1:]
         for line in hunk_lines
         if line.startswith((" ", "-"))
     ]
 
 
 def _apply_hunk(old_lines: list[str], hunk_lines: list[str], old_start: int, old_count: int) -> list[str]:
-    """
-    Apply a single hunk to old_lines. Returns the new lines.
-    old_start is 1-based, old_count is number of context/removal lines.
-    """
-    # Convert to 0-based index
+    """Apply a single hunk to old_lines. Returns the new lines."""
     start_idx = old_start - 1
     end_idx = start_idx + old_count
 
-    # Build the replacement from the hunk (context and additions only)
     replacement: list[str] = []
     for line in hunk_lines:
-        content = line[1:] + "\n"  # splitlines() strips newlines
+        content = line[1:] + "\n"
         if line.startswith(" "):
             replacement.append(content)
-        elif line.startswith("-"):
-            pass  # removal
         elif line.startswith("+"):
             replacement.append(content)
 
@@ -88,16 +84,11 @@ def _apply_hunk(old_lines: list[str], hunk_lines: list[str], old_start: int, old
 
 
 def _find_hunk_position(lines: list[str], hunk_lines: list[str], old_start: int, old_count: int) -> int | None:
-    """
-    Find the best position to apply the hunk. Uses difflib.SequenceMatcher for fuzzy matching.
-    Returns 0-based start index or None if no suitable match.
-    """
+    """Find the best position to apply the hunk using fuzzy matching."""
     old_context = _extract_old_context(hunk_lines)
     if not old_context:
-        # Pure addition hunk - use old_start
         return max(0, old_start - 1)
 
-    # Try exact match first
     start_idx = old_start - 1
     end_idx = start_idx + len(old_context)
     if end_idx <= len(lines):
@@ -105,14 +96,12 @@ def _find_hunk_position(lines: list[str], hunk_lines: list[str], old_start: int,
         if candidate == old_context:
             return start_idx
 
-    # Fuzzy match using SequenceMatcher
     text = "\n".join(line.rstrip("\n\r") for line in lines)
     pattern = "\n".join(old_context)
     matcher = difflib.SequenceMatcher(None, text, pattern)
     match = matcher.find_longest_match(0, len(text), 0, len(pattern))
 
     if match.size > 0:
-        # Find which line this corresponds to
         before_match = text[: match.a]
         line_num = before_match.count("\n")
         return line_num
@@ -121,10 +110,7 @@ def _find_hunk_position(lines: list[str], hunk_lines: list[str], old_start: int,
 
 
 def apply_patch_to_text(original: str, patch_content: str) -> tuple[str, list[str]]:
-    """
-    Apply a unified diff to original text.
-    Returns (patched_text, list of error/warning messages).
-    """
+    """Apply a unified diff to original text."""
     work_lines = original.splitlines(keepends=True)
     if not work_lines:
         work_lines = [""]
@@ -161,7 +147,7 @@ def create_unified_diff(old_lines: list[str], new_lines: list[str], fromfile: st
 
 
 class PatchFile(BaseModel):
-    path: str = Field(..., description="Absolute path or path relative to the codebase root.")
+    path: str = Field(..., description="Absolute path or path relative to the workspace root.")
     patch: str = Field(..., description="Unified diff in standard format (--- a/file, +++ b/file, @@ hunks). Generate with 'diff -u old new' or difflib.unified_diff(). Context lines (unchanged lines around edits) are required for fuzzy matching to work.")
 
 
@@ -171,7 +157,12 @@ class PatchFile(BaseModel):
     model=PatchFile,
 )
 async def patch_file(path: str, patch: str, **kwargs) -> ToolResult:
-    resolved_path = resolve(base="./workspace", path=path)
+    workspace = get_workspace_root(**kwargs)
+    protected_paths = kwargs.get("_protected_paths")
+    try:
+        resolved_path = ensure_allowed_path(path, workspace=workspace, protected_paths=protected_paths)
+    except PathAccessError as e:
+        return ToolResult.error_result(str(e))
 
     if not resolved_path.exists():
         return ToolResult.error_result(f"File not found: {resolved_path}")
@@ -196,7 +187,9 @@ async def patch_file(path: str, patch: str, **kwargs) -> ToolResult:
         return ToolResult.error_result("Patch application failed:\n" + "\n".join(errors))
 
     try:
-        resolved_path.write_text(patched, encoding="utf-8")
+        tmp_path = resolved_path.with_suffix(resolved_path.suffix + ".tmp")
+        tmp_path.write_text(patched, encoding="utf-8")
+        tmp_path.replace(resolved_path)
     except (OSError, IOError) as e:
         return ToolResult.error_result(f"Failed to write file: {resolved_path}. {e}")
 

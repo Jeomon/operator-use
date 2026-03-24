@@ -1,8 +1,10 @@
 """Tool registry for the agent module."""
 
-from operator_use.tools.service import Tool,ToolResult
-from typing import Any
 import logging
+from typing import Any
+
+from operator_use.agent.tools.governance import GovernanceProfile
+from operator_use.tools.service import Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +70,27 @@ class ToolRegistry:
         except Exception as e:
             return [str(e)], params
 
+    def _governance_profile(self) -> GovernanceProfile | None:
+        profile = self._extensions.get("_governance_profile")
+        if isinstance(profile, GovernanceProfile):
+            return profile
+        return None
+
+    def _authorize(self, name: str) -> ToolResult | None:
+        profile = self._governance_profile()
+        if profile and not profile.allows(name):
+            return ToolResult.error_result(
+                f"Tool '{name}' is not allowed by the current governance profile"
+            )
+        return None
+
     def execute(self, name: str, params: dict) -> ToolResult:
         """Validate params, execute the tool by name, and return the result."""
         tool = self._tools.get(name)
         if not tool:
             return ToolResult.error_result(f"Tool '{name}' not found")
+        if blocked := self._authorize(name):
+            return blocked
         if tool.model is not None:
             errors, coerced = self._coerce_params(tool, params)
             if errors:
@@ -92,6 +110,9 @@ class ToolRegistry:
         if not tool:
             logger.debug(f"Tool '{name}' not found. Available: {list(self._tools.keys())}")
             return ToolResult.error_result(f"Tool '{name}' not found")
+        if blocked := self._authorize(name):
+            logger.debug("Governance blocked tool '%s'", name)
+            return blocked
         if tool.model is not None:
             errors, coerced = self._coerce_params(tool, params)
             if errors:

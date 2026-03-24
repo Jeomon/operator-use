@@ -234,6 +234,13 @@ from operator_use.config import (
     AgentDefaults, AgentsConfig, ProvidersConfig, ProviderConfig,
     ChannelsConfig, TelegramConfig, DiscordConfig, SlackConfig,
     AgentDefinition, ACPServerSettings, ACPAgentEntry, HeartbeatConfig,
+    PolicyDefinition, GovernanceConfig,
+)
+
+
+POLICY_TOOL_HINT = (
+    "Examples: agents.*, message.*, channel.send, web.*, filesystem.read, "
+    "filesystem.list, filesystem.*, terminal.exec, process.*"
 )
 
 
@@ -286,10 +293,16 @@ def _save_config(
             setattr(providers, prov, ProviderConfig(api_key=key))
 
     agent_list = []
+    policies: dict[str, PolicyDefinition] = {}
     for a in agent_defs:
         defn_kwargs: dict = {"id": a["id"]}
         if a["llm_provider_key"] and a["llm_model"]:
             defn_kwargs["llm_config"] = LLMConfig(provider=a["llm_provider_key"], model=a["llm_model"])
+        policy_name = (a.get("policy_name") or "").strip()
+        allowed_tools = [tool for tool in a.get("allowed_tools", []) if tool]
+        if policy_name and allowed_tools:
+            defn_kwargs["policy"] = policy_name
+            policies[policy_name] = PolicyDefinition(allowed_tools=allowed_tools)
         ch = a.get("channels", {})
         if ch.get("telegram") or ch.get("discord") or ch.get("slack_bot"):
             agent_channels = ChannelsConfig()
@@ -311,6 +324,8 @@ def _save_config(
             defaults=AgentDefaults(),
             list=agent_list,
         ),
+        policies=policies,
+        governance=GovernanceConfig(),
         stt=STTConfig(enabled=stt_enabled, provider=stt_provider_key or None, model=stt_model or None),
         tts=TTSConfig(enabled=tts_enabled, provider=tts_provider_key or None, model=tts_model or None, voice=tts_voice),
         providers=providers,
@@ -492,6 +507,7 @@ def run_initial_setup():
     acp_agents: dict[str, ACPAgentEntry] = {
         k: ACPAgentEntry(**v) for k, v in _acp_agents_raw.items()
     } if _acp_agents_raw else {}
+    _policies_raw = existing_data.get("policies", {}) or {}
 
     # Agent definitions: list of dicts with per-agent overrides.
     # None values mean "use global default".
@@ -503,6 +519,8 @@ def run_initial_setup():
             "id":               a.get("id", ""),
             "llm_provider_key": _a_llm.get("provider") or None,
             "llm_model":        _a_llm.get("model") or None,
+            "policy_name":      a.get("policy", "") or "",
+            "allowed_tools":    list((_policies_raw.get(a.get("policy", "") or "", {}) or {}).get("allowedTools", [])),
             "channels":         {
                 "telegram": _a_ch.get("telegram", {}).get("token", "") or "",
                 "discord":  _a_ch.get("discord",  {}).get("token", "") or "",
@@ -516,6 +534,7 @@ def run_initial_setup():
     # Ensure at least one agent entry exists (edge case: corrupted config)
     if not agent_defs:
         agent_defs.append({"id": "operator", "llm_provider_key": None, "llm_model": None,
+                           "policy_name": "operator", "allowed_tools": [],
                            "channels": {"telegram": "", "discord": "", "slack_bot": "", "slack_app": ""},
                            "browser_use": True, "computer_use": False})
 
@@ -533,6 +552,36 @@ def run_initial_setup():
         elif _need_key(prov_key, prov_name):
             api_keys_dict[prov_key] = text_input(f"Enter API Key for {prov_name}:", is_password=True)
         return prov_key, model
+
+    def _configure_policy(idx: int) -> None:
+        a = agent_defs[idx]
+        current_name = a.get("policy_name") or a["id"]
+        current_tools = list(a.get("allowed_tools", []))
+
+        console.print("│")
+        console.print(f"│  [dim]{POLICY_TOOL_HINT}[/dim]")
+
+        policy_name = text_input("Policy name:", default=current_name).strip()
+        if not policy_name:
+            policy_name = a["id"]
+
+        if any(
+            other.get("policy_name") == policy_name
+            for i2, other in enumerate(agent_defs)
+            if i2 != idx
+        ):
+            console.print("│")
+            console.print(f"│  [red]Policy name '{policy_name}' is already used by another agent.[/red]")
+            return
+
+        tools_raw = text_input(
+            "Allowed tools (comma-separated, blank to clear):",
+            default=", ".join(current_tools),
+        ).strip()
+        allowed_tools = [tool.strip() for tool in tools_raw.split(",") if tool.strip()]
+
+        agent_defs[idx]["policy_name"] = policy_name if allowed_tools else ""
+        agent_defs[idx]["allowed_tools"] = allowed_tools
 
     # ── Per-agent submenu ─────────────────────────────────────────────────────
     def _agent_submenu(idx: int) -> None:
@@ -554,10 +603,17 @@ def run_initial_setup():
                 computer_use = a.get("computer_use", False)
                 bu_label = "enabled" if browser_use else "disabled"
                 cu_label = "enabled" if computer_use else "disabled"
+                policy_name = a.get("policy_name", "")
+                allowed_tools = a.get("allowed_tools", [])
+                if policy_name and allowed_tools:
+                    policy_label = f"{policy_name} ({len(allowed_tools)} tools)"
+                else:
+                    policy_label = "unrestricted"
 
                 choice = select(f"Configure agent: {a['id']}", [
                     f"Rename         {a['id']}",
                     f"LLM            {a_llm_label}",
+                    f"Policy         {policy_label}",
                     f"Channels       {ch_label}",
                     f"Browser Use    {bu_label}",
                     f"Computer Use   {cu_label}",
@@ -575,7 +631,10 @@ def run_initial_setup():
                         console.print("│")
                         console.print(f"│  [red]Name '{new_id}' is already taken.[/red]")
                     else:
+                        old_id = agent_defs[idx]["id"]
                         agent_defs[idx]["id"] = new_id
+                        if agent_defs[idx].get("policy_name") == old_id:
+                            agent_defs[idx]["policy_name"] = new_id
 
                 elif choice.startswith("LLM"):
                     prov_choice = select("Pick LLM provider for this agent:", list(LLM_PROVIDERS.keys()))
@@ -588,6 +647,9 @@ def run_initial_setup():
                         api_keys_dict[prov_key] = text_input(f"Enter API Key for {prov_choice}:", is_password=True)
                     agent_defs[idx]["llm_provider_key"] = prov_key
                     agent_defs[idx]["llm_model"] = model
+
+                elif choice.startswith("Policy"):
+                    _configure_policy(idx)
 
                 elif choice.startswith("Channels"):
                     ch = agent_defs[idx].setdefault("channels", {"telegram": "", "discord": "", "slack_bot": "", "slack_app": ""})
@@ -687,6 +749,8 @@ def run_initial_setup():
                             "id": new_id,
                             "llm_provider_key": None,
                             "llm_model": None,
+                            "policy_name": new_id,
+                            "allowed_tools": [],
                             "channels": {"telegram": "", "discord": "", "slack_bot": "", "slack_app": ""},
                             "browser_use": True,
                             "computer_use": False,

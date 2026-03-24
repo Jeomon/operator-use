@@ -54,6 +54,7 @@ def setup_logging(userdata_dir: Path, verbose: bool = False) -> None:
 
 import operator_use
 from operator_use.agent import Agent
+from operator_use.agent.tools.governance import GovernanceProfile
 from operator_use.orchestrator import Orchestrator
 from operator_use.bus import Bus
 from operator_use.gateway import Gateway
@@ -72,7 +73,6 @@ from operator_use.bus import OutgoingMessage, IncomingMessage, TextPart
 from operator_use.config import Config, load_config, AgentDefinition
 from operator_use.paths import get_named_workspace_dir
 from typing import Optional
-from pathlib import Path
 
 LLM_CLASS_MAP = {
     "openai": "ChatOpenAI",
@@ -172,6 +172,42 @@ def _resolve_agent_workspace(defn: AgentDefinition) -> Path:
     return get_named_workspace_dir(defn.id)
 
 
+def _build_governance_profile(config: Config, defn: AgentDefinition) -> GovernanceProfile | None:
+    if not defn.policy:
+        return None
+    policy = config.policies.get(defn.policy)
+    if policy is None:
+        raise ValueError(
+            f"Agent '{defn.id}' references unknown policy '{defn.policy}'. "
+            "Add it under policies in config.json."
+        )
+    return GovernanceProfile(allowed_tools=list(policy.allowed_tools))
+
+
+def _build_protected_paths(config: Config) -> list[Path]:
+    governance = config.governance
+    protected_paths: list[Path] = []
+
+    if governance.protect_codebase:
+        protected_paths.append(Path(operator_use.__file__).resolve().parent.parent)
+    if governance.protect_runtime_config:
+        from operator_use.paths import get_userdata_dir
+
+        protected_paths.append(get_userdata_dir().resolve() / "config.json")
+
+    protected_paths.extend(Path(path).expanduser().resolve() for path in governance.protected_paths)
+
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for path in protected_paths:
+        key = str(path).lower()
+        if key in seen:
+            continue
+        deduped.append(path)
+        seen.add(key)
+    return deduped
+
+
 
 def _build_agents(config: Config, cron, gateway, bus) -> dict[str, Agent]:
     """Instantiate one Agent per agent definition in config."""
@@ -180,6 +216,7 @@ def _build_agents(config: Config, cron, gateway, bus) -> dict[str, Agent]:
 
     defaults = config.agents.defaults
     agent_defs = config.agents.list
+    protected_paths = _build_protected_paths(config)
 
     if not agent_defs:
         raise ValueError("No agents defined in config. Run 'operator onboard' to set up an agent.")
@@ -193,6 +230,7 @@ def _build_agents(config: Config, cron, gateway, bus) -> dict[str, Agent]:
         if llm is None:
             raise ValueError(f"Agent '{defn.id}': failed to initialize LLM provider '{llm_conf.provider}'. Check the provider name and API key.")
         workspace = _resolve_agent_workspace(defn)
+        governance_profile = _build_governance_profile(config, defn)
 
         plugins = [
             ComputerPlugin(enabled=bool(defn.computer_use)),
@@ -210,6 +248,8 @@ def _build_agents(config: Config, cron, gateway, bus) -> dict[str, Agent]:
             bus=bus,
             acp_registry=config.acp_agents,
             plugins=plugins,
+            governance_profile=governance_profile,
+            protected_paths=protected_paths,
         )
 
     for agent in agents.values():

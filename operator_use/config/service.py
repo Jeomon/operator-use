@@ -139,12 +139,27 @@ class AgentDefaults(Base):
     streaming: bool = True
 
 
+class PolicyDefinition(Base):
+    """Named governance policy for an agent."""
+
+    allowed_tools: List[str] = Field(default_factory=list)
+
+
+class GovernanceConfig(Base):
+    """Global governance settings shared across agents."""
+
+    protect_codebase: bool = True
+    protect_runtime_config: bool = True
+    protected_paths: List[str] = Field(default_factory=list)
+
+
 class AgentDefinition(Base):
     """Individual agent definition."""
 
     id: str
     description: str = ""  # Short role/capability summary used for delegation and routing hints
     workspace: Optional[str] = None  # Defaults to ~/.operator-use/workspaces/<id>
+    policy: Optional[str] = None  # Named governance policy from config.policies
     llm_config: Optional[LLMConfig] = None  # Overrides agents.defaults.llm_config
     max_tool_iterations: Optional[int] = None  # Overrides agents.defaults
     channels: Optional["ChannelsConfig"] = None  # Per-agent dedicated channel bots
@@ -230,6 +245,8 @@ class Config(BaseSettings):
     """Root configuration for Operator."""
 
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
+    policies: Dict[str, PolicyDefinition] = Field(default_factory=dict)
+    governance: GovernanceConfig = Field(default_factory=GovernanceConfig)
     bindings: List[AgentRouteBinding] = Field(default_factory=list)
     stt: STTConfig = Field(default_factory=STTConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)

@@ -3,8 +3,10 @@
 import asyncio
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from operator_use.agent.tools.governance import GovernanceProfile
 from operator_use.bus import Bus
 from operator_use.subagent.views import SubagentRecord
 
@@ -15,15 +17,34 @@ if TYPE_CHECKING:
 class SubagentManager:
     """Registry that spawns isolated subagent tasks and tracks their lifecycle."""
 
-    def __init__(self, llm: "BaseChatLLM", bus: Bus) -> None:
+    def __init__(
+        self,
+        llm: "BaseChatLLM",
+        bus: Bus,
+        workspace: Path,
+        protected_paths: list[Path] | None = None,
+    ) -> None:
         from operator_use.subagent.service import Subagent
 
-        self._runner = Subagent(llm=llm, bus=bus)
+        self._runner = Subagent(
+            llm=llm,
+            bus=bus,
+            workspace=workspace,
+            protected_paths=protected_paths,
+        )
         self._tasks: dict[str, asyncio.Task] = {}
         self._session_tasks: dict[str, set[str]] = {}
         self._records: dict[str, SubagentRecord] = {}
 
-    async def ainvoke(self, task: str, label: str | None, channel: str, chat_id: str, account_id: str = "") -> str:
+    async def ainvoke(
+        self,
+        task: str,
+        label: str | None,
+        channel: str,
+        chat_id: str,
+        account_id: str = "",
+        governance_profile: GovernanceProfile | None = None,
+    ) -> str:
         """Spawn a background subagent. Returns task_id immediately."""
         task_id = f"sub_{uuid.uuid4().hex[:8]}"
         session_key = f"{channel}:{chat_id}"
@@ -42,7 +63,7 @@ class SubagentManager:
         self._records[task_id] = record
 
         t = asyncio.create_task(
-            self._runner.run(record),
+            self._runner.run(record, governance_profile=governance_profile),
             name=f"subagent-{task_id}",
         )
         self._tasks[task_id] = t

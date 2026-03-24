@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from operator_use.agent.tools.governance import GovernanceProfile
 from operator_use.agent.tools.builtin.local_agents import localagents
 from operator_use.messages.service import AIMessage
 
@@ -27,8 +28,10 @@ async def test_localagents_lists_available_agents():
     )
 
     assert result.success is True
+    assert result.output is not None
     assert "manager (current)" in result.output
     assert "Browser specialist" in result.output
+    assert "[capabilities:" not in result.output
 
 
 @pytest.mark.asyncio
@@ -65,4 +68,28 @@ async def test_localagents_refuses_self_delegation():
     )
 
     assert result.success is False
+    assert result.error is not None
     assert "Refusing to delegate" in result.error
+
+
+@pytest.mark.asyncio
+async def test_localagents_passes_governance_profile_to_target():
+    current = make_target_agent(description="Manager")
+    target = make_target_agent(response_text="done", description="Writer")
+
+    result = await localagents.ainvoke(
+        action="run",
+        name="writer",
+        task="Draft a summary",
+        allowed_tools=["web.*"],
+        _agent=current,
+        _agent_id="manager",
+        _session_id="chat:42",
+        _agent_registry={"manager": current, "writer": target},
+    )
+
+    assert result.success is True
+    incoming = target.run.await_args.kwargs["incoming"]
+    profile = incoming.metadata["_governance_profile"]
+    assert profile["allowed_tools"] == ["web.*"]
+    assert "parent" not in profile

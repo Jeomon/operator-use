@@ -4,8 +4,9 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from operator_use.agent.service import Agent
+from operator_use.agent.tools.governance import GovernanceProfile
 from operator_use.bus.views import IncomingMessage, TextPart
-from operator_use.messages.service import AIMessage, HumanMessage
+from operator_use.messages.service import AIMessage, HumanMessage, ToolMessage
 from operator_use.providers.events import LLMEvent, LLMEventType, ToolCall
 
 
@@ -239,3 +240,96 @@ async def test_agent_run_hooks_fired(tmp_path):
     await agent.run(message=HumanMessage(content="hi"), session_id="hook:session")
     assert "start" in fired
     assert "end" in fired
+
+
+@pytest.mark.asyncio
+async def test_agent_governance_blocks_builtin_terminal_tool(tmp_path):
+    llm = MagicMock()
+    llm.model_name = "mock-llm"
+    llm.astream = None
+    llm.ainvoke = AsyncMock(side_effect=[
+        LLMEvent(
+            type=LLMEventType.TOOL_CALL,
+            tool_call=ToolCall(id="t1", name="terminal", params={"cmd": "echo hello", "timeout": 5}),
+        ),
+        LLMEvent(type=LLMEventType.TEXT, content="blocked as expected"),
+    ])
+
+    agent = Agent(
+        llm=llm,
+        workspace=tmp_path,
+        governance_profile=GovernanceProfile(allowed_tools=["web.*"]),
+    )
+
+    response = await agent.run(message=HumanMessage(content="use terminal"), session_id="gov:block")
+
+    assert response.content == "blocked as expected"
+    session = agent.sessions.get_or_create("gov:block")
+    tool_messages = [m for m in session.messages if isinstance(m, ToolMessage)]
+    assert tool_messages
+    assert "not allowed" in tool_messages[-1].content
+
+
+@pytest.mark.asyncio
+async def test_agent_local_delegation_scoped_profile_allows_target_read(tmp_path):
+    shared_file = tmp_path / "note.txt"
+    shared_file.write_text("delegated content", encoding="utf-8")
+
+    boss_llm = MagicMock()
+    boss_llm.model_name = "boss-llm"
+    boss_llm.astream = None
+    boss_llm.ainvoke = AsyncMock(side_effect=[
+        LLMEvent(
+            type=LLMEventType.TOOL_CALL,
+            tool_call=ToolCall(
+                id="boss-1",
+                name="localagents",
+                params={
+                    "action": "run",
+                    "name": "reader",
+                    "task": "Read note.txt and answer with its contents.",
+                    "allowed_tools": ["filesystem.read"],
+                },
+            ),
+        ),
+        LLMEvent(type=LLMEventType.TEXT, content="delegation complete"),
+    ])
+
+    reader_llm = MagicMock()
+    reader_llm.model_name = "reader-llm"
+    reader_llm.astream = None
+    reader_llm.ainvoke = AsyncMock(side_effect=[
+        LLMEvent(
+            type=LLMEventType.TOOL_CALL,
+            tool_call=ToolCall(
+                id="reader-1",
+                name="read_file",
+                params={"path": "note.txt"},
+            ),
+        ),
+        LLMEvent(type=LLMEventType.TEXT, content="done"),
+    ])
+
+    boss = Agent(
+        llm=boss_llm,
+        agent_id="boss",
+        workspace=tmp_path,
+        governance_profile=GovernanceProfile(allowed_tools=["agents.*"]),
+    )
+    reader = Agent(
+        llm=reader_llm,
+        agent_id="reader",
+        workspace=tmp_path,
+    )
+
+    registry = {"boss": boss, "reader": reader}
+    boss.tool_register.set_extension("_agent_registry", registry)
+    reader.tool_register.set_extension("_agent_registry", registry)
+
+    response = await boss.run(message=HumanMessage(content="delegate"), session_id="gov:delegate")
+
+    assert response.content == "delegation complete"
+    reader_session = reader.sessions.get_or_create("delegation__delegate__boss-to-reader")
+    tool_messages = [m for m in reader_session.messages if isinstance(m, ToolMessage)]
+    assert tool_messages
+    assert "delegated content" in tool_messages[-1].content

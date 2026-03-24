@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Callable, Awaitable
 from operator_use.messages import AIMessage, HumanMessage, ImageMessage, ToolMessage
 from operator_use.agent.context import Context
 from operator_use.agent.tools import ToolRegistry, BUILTIN_TOOLS
+from operator_use.agent.tools.governance import GovernanceProfile
 from operator_use.bus import IncomingMessage
 from operator_use.providers.events import LLMEventType, LLMStreamEventType
 from operator_use.session import SessionStore, Session
@@ -61,6 +62,8 @@ class Agent:
         exclude_tools: list | None = None,
         acp_registry: dict | None = None,
         plugins: "list[Plugin] | None" = None,
+        governance_profile: GovernanceProfile | None = None,
+        protected_paths: list[Path] | None = None,
     ):
         self.agent_id = agent_id
         self.description = description
@@ -76,9 +79,16 @@ class Agent:
         self.cron = cron
         self.gateway = gateway
         self.bus = bus
-        self.subagent_store = SubagentManager(llm=llm, bus=bus)
+        self.protected_paths = [Path(path).expanduser().resolve() for path in (protected_paths or [])]
+        self.subagent_store = SubagentManager(
+            llm=llm,
+            bus=bus,
+            workspace=self.workspace,
+            protected_paths=self.protected_paths,
+        )
         self.process_store = ProcessStore()
         self.hooks = Hooks()
+        self.governance_profile = governance_profile
 
         self.tool_register.register_tools(BUILTIN_TOOLS)
         if exclude_tools:
@@ -95,6 +105,10 @@ class Agent:
         self.tool_register.set_extension("_llm", self.llm)
         self.tool_register.set_extension("_agent", self)
         self.tool_register.set_extension("_agent_id", self.agent_id)
+        if self.protected_paths:
+            self.tool_register.set_extension("_protected_paths", self.protected_paths)
+        if self.governance_profile is not None:
+            self.tool_register.set_extension("_governance_profile", self.governance_profile)
 
         # Wire plugins
         self.plugins: "list[Plugin]" = plugins or []
@@ -160,45 +174,59 @@ class Agent:
             pending_replies: Shared dict for tools that wait for a user reply.
         """
         # Set per-message tool extensions
+        delegated_profile = None
         if incoming:
             self.tool_register.set_extension("_channel", incoming.channel)
             self.tool_register.set_extension("_chat_id", incoming.chat_id)
             self.tool_register.set_extension("_account_id", incoming.account_id)
             self.tool_register.set_extension("_metadata", incoming.metadata or {})
             self.tool_register.set_extension("_session_id", session_id)
+            delegated_profile = GovernanceProfile.from_dict(
+                (incoming.metadata or {}).get("_governance_profile")
+            )
+            if delegated_profile is not None:
+                delegated_profile = delegated_profile.with_parent(self.governance_profile)
+                self.tool_register.set_extension("_governance_profile", delegated_profile)
         if pending_replies is not None:
             self.tool_register.set_extension("_pending_replies", pending_replies)
 
-        session = self.sessions.get_or_create(session_id=session_id)
-        session.add_message(message)
+        try:
+            session = self.sessions.get_or_create(session_id=session_id)
+            session.add_message(message)
 
-        await self.hooks.emit(
-            HookEvent.BEFORE_AGENT_START,
-            BeforeAgentStartContext(message=incoming, session=session),
-        )
-
-        if publish_stream is not None:
-            response_message = await self._loop_stream(
-                session=session, publish_stream=publish_stream, message=incoming
+            await self.hooks.emit(
+                HookEvent.BEFORE_AGENT_START,
+                BeforeAgentStartContext(message=incoming, session=session),
             )
-        else:
-            response_message = await self._loop(session=session, message=incoming)
 
-        # Allow hooks to modify the final response before saving
-        end_ctx = await self.hooks.emit(
-            HookEvent.BEFORE_AGENT_END,
-            BeforeAgentEndContext(message=incoming, session=session, response=response_message),
-        )
-        response_message = end_ctx.response
+            if publish_stream is not None:
+                response_message = await self._loop_stream(
+                    session=session, publish_stream=publish_stream, message=incoming
+                )
+            else:
+                response_message = await self._loop(session=session, message=incoming)
 
-        self.sessions.save(session)
+            # Allow hooks to modify the final response before saving
+            end_ctx = await self.hooks.emit(
+                HookEvent.BEFORE_AGENT_END,
+                BeforeAgentEndContext(message=incoming, session=session, response=response_message),
+            )
+            response_message = end_ctx.response
 
-        await self.hooks.emit(
-            HookEvent.AFTER_AGENT_END,
-            AfterAgentEndContext(message=incoming, session=session, response=response_message),
-        )
+            self.sessions.save(session)
 
-        return response_message
+            await self.hooks.emit(
+                HookEvent.AFTER_AGENT_END,
+                AfterAgentEndContext(message=incoming, session=session, response=response_message),
+            )
+
+            return response_message
+        finally:
+            if delegated_profile is not None:
+                if self.governance_profile is not None:
+                    self.tool_register.set_extension("_governance_profile", self.governance_profile)
+                else:
+                    self.tool_register.unset_extension("_governance_profile")
 
     # ------------------------------------------------------------------
     # Reaction handling (no LLM call — update metadata only)

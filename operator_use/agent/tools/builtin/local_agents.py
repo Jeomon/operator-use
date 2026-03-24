@@ -6,6 +6,7 @@ from typing import Optional, Literal
 
 from pydantic import BaseModel, Field
 
+from operator_use.agent.tools.governance import GovernanceProfile
 from operator_use.bus.views import IncomingMessage, TextPart
 from operator_use.messages import HumanMessage
 from operator_use.tools import Tool, ToolResult
@@ -26,22 +27,20 @@ class LocalAgents(BaseModel):
         default=None,
         description="Delegated task for the target local agent (required for action='run').",
     )
-
-
-def _agent_capabilities(agent) -> str:
-    caps: list[str] = []
-    if agent.get_plugin("browser_use") is not None:
-        caps.append("browser")
-    if agent.get_plugin("computer_use") is not None:
-        caps.append("computer")
-    return ", ".join(caps) if caps else "general"
+    allowed_tools: list[str] | None = Field(
+        default=None,
+        description=(
+            "Optional tool patterns to enforce on the delegated run, such as ['web.*'] or "
+            "['filesystem.read']."
+        ),
+    )
 
 
 @Tool(
     name="localagents",
     description=(
         "Call other configured local Operator agents in-process. "
-        "Useful for a manager agent coordinating specialized agents on one request."
+        "Useful when one configured agent needs to coordinate another on one request."
     ),
     model=LocalAgents,
 )
@@ -49,6 +48,7 @@ async def localagents(
     action: str,
     name: str | None = None,
     task: str | None = None,
+    allowed_tools: list[str] | None = None,
     **kwargs,
 ) -> ToolResult:
     registry: dict = kwargs.get("_agent_registry") or {}
@@ -64,10 +64,7 @@ async def localagents(
         for agent_id, agent in registry.items():
             marker = " (current)" if agent_id == current_agent_id else ""
             description = getattr(agent, "description", "") or "No description provided."
-            lines.append(
-                f"  • {agent_id}{marker} — {description} "
-                f"[capabilities: {_agent_capabilities(agent)}]"
-            )
+            lines.append(f"  • {agent_id}{marker} — {description}")
         return ToolResult.success_result("\n".join(lines))
 
     if action != "run":
@@ -87,6 +84,7 @@ async def localagents(
         return ToolResult.error_result("Refusing to delegate to the current agent. Choose a different local agent.")
 
     delegated_session_id = f"{parent_session_id}__delegate__{current_agent_id or 'agent'}-to-{name}"
+    delegated_profile = GovernanceProfile(allowed_tools=list(allowed_tools)) if allowed_tools else None
     incoming = IncomingMessage(
         channel="direct",
         chat_id=delegated_session_id,
@@ -97,6 +95,7 @@ async def localagents(
             "_delegated_local_agent_call": True,
             "from_agent": current_agent_id,
             "to_agent": name,
+            "_governance_profile": delegated_profile.to_dict() if delegated_profile else None,
         },
     )
 

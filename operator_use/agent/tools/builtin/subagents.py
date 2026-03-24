@@ -5,6 +5,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from operator_use.agent.tools.governance import GovernanceProfile
 from operator_use.tools import Tool, ToolResult
 
 
@@ -23,6 +24,13 @@ class Subagents(BaseModel):
     label: Optional[str] = Field(
         default=None,
         description="Short label for this subagent, e.g. 'research', 'file scan' (create action).",
+    )
+    allowed_tools: list[str] | None = Field(
+        default=None,
+        description=(
+            "Optional tool patterns for the subagent, such as ['web.*'] or ['filesystem.read']. "
+            "If omitted, it inherits the current agent's governance profile."
+        ),
     )
     task_id: Optional[str] = Field(
         default=None,
@@ -56,6 +64,7 @@ async def subagents(
     action: str,
     task: str | None = None,
     label: str | None = None,
+    allowed_tools: list[str] | None = None,
     task_id: str | None = None,
     **kwargs,
 ) -> ToolResult:
@@ -63,6 +72,7 @@ async def subagents(
     channel = kwargs.get("_channel")
     chat_id = kwargs.get("_chat_id")
     account_id = kwargs.get("_account_id", "")
+    parent_profile = kwargs.get("_governance_profile")
 
     if not subagent_store:
         return ToolResult.error_result("Subagent store not available (internal error)")
@@ -74,7 +84,21 @@ async def subagents(
                 return ToolResult.error_result("Provide task description to create a subagent")
             if channel is None or chat_id is None:
                 return ToolResult.error_result("Channel context not available (internal error)")
-            tid = await subagent_store.ainvoke(task, label, channel, chat_id, account_id)
+            governance_profile = (
+                parent_profile.scoped(allowed_tools)
+                if isinstance(parent_profile, GovernanceProfile)
+                else GovernanceProfile(allowed_tools=allowed_tools or [])
+                if allowed_tools
+                else None
+            )
+            tid = await subagent_store.ainvoke(
+                task,
+                label,
+                channel,
+                chat_id,
+                account_id,
+                governance_profile=governance_profile,
+            )
             display = label or task[:60]
             return ToolResult.success_result(
                 f"Subagent created (task_id={tid}  label='{display}')\n"

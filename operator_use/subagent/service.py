@@ -3,8 +3,10 @@
 import asyncio
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from operator_use.agent.tools.governance import GovernanceProfile
 from operator_use.agent.tools import ToolRegistry
 from operator_use.agent.tools.builtin import FILESYSTEM_TOOLS, WEB_TOOLS, TERMINAL_TOOLS
 from operator_use.bus import Bus, IncomingMessage
@@ -30,17 +32,34 @@ Do not send messages to the user — your final response is relayed by the main 
 class Subagent:
     """Runs an isolated agent loop for a single delegated task."""
 
-    def __init__(self, llm: "BaseChatLLM", bus: Bus) -> None:
+    def __init__(
+        self,
+        llm: "BaseChatLLM",
+        bus: Bus,
+        workspace: Path,
+        protected_paths: list[Path] | None = None,
+    ) -> None:
         self.llm = llm
         self.bus = bus
+        self.workspace = workspace
+        self.protected_paths = [Path(path).expanduser().resolve() for path in (protected_paths or [])]
 
-    async def run(self, record: SubagentRecord) -> None:
+    async def run(
+        self,
+        record: SubagentRecord,
+        governance_profile: GovernanceProfile | None = None,
+    ) -> None:
         """Execute the task and update the record with status/result when done."""
         logger.info(f"[{record.task_id}] subagent '{record.label}' started")
 
         registry = ToolRegistry()
         registry.register_tools(FILESYSTEM_TOOLS + WEB_TOOLS + TERMINAL_TOOLS)
         registry.set_extension("_llm", self.llm)
+        registry.set_extension("_workspace", self.workspace)
+        if self.protected_paths:
+            registry.set_extension("_protected_paths", self.protected_paths)
+        if governance_profile is not None:
+            registry.set_extension("_governance_profile", governance_profile)
 
         tools = registry.list_tools()
 

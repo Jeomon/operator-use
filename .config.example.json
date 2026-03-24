@@ -1,21 +1,71 @@
 {
-  "agent": {
-    "streaming": false,
-    "llm": {
-      "provider": "nvidia",
-      "model": "nemotron-nano-12b-instruct-v1:1"
+  "agents": {
+    "defaults": {
+      "streaming": false,
+      "maxToolIterations": 40
     },
-    "stt": {
-      "enabled": true,
-      "provider": "sarvam",
-      "model": "saaras:v3"
+    "list": [
+      {
+        "id": "operator",
+        "description": "Default operator agent",
+        "policy": "operator",
+        "llmConfig": {
+          "provider": "nvidia",
+          "model": "nemotron-nano-12b-instruct-v1:1"
+        },
+        "browserUse": true,
+        "computerUse": false
+      },
+      {
+        "id": "web_agent",
+        "description": "Web-focused helper agent",
+        "policy": "web_agent",
+        "llmConfig": {
+          "provider": "nvidia",
+          "model": "nemotron-nano-12b-instruct-v1:1"
+        },
+        "browserUse": true,
+        "computerUse": false
+      },
+      {
+        "id": "code_agent",
+        "description": "Code and terminal helper agent",
+        "policy": "code_agent",
+        "llmConfig": {
+          "provider": "nvidia",
+          "model": "nemotron-nano-12b-instruct-v1:1"
+        },
+        "browserUse": false,
+        "computerUse": false
+      }
+    ]
+  },
+  "stt": {
+    "enabled": true,
+    "provider": "sarvam",
+    "model": "saaras:v3"
+  },
+  "tts": {
+    "enabled": true,
+    "provider": "sarvam",
+    "model": "bulbul:v3",
+    "voice": "kavya"
+  },
+  "policies": {
+    "operator": {
+      "allowedTools": ["agents.*", "message.*", "channel.send"]
     },
-    "tts": {
-      "enabled": true,
-      "provider": "sarvam",
-      "model": "bulbul:v3",
-      "voice": "kavya"
+    "web_agent": {
+      "allowedTools": ["web.*", "filesystem.read", "filesystem.list", "message.*"]
+    },
+    "code_agent": {
+      "allowedTools": ["filesystem.*", "terminal.exec", "process.*", "message.*"]
     }
+  },
+  "governance": {
+    "protectCodebase": true,
+    "protectRuntimeConfig": true,
+    "protectedPaths": []
   },
   "providers": {
     "nvidia": {
@@ -26,6 +76,9 @@
     },
     "sarvam": {
       "api_key": "API_KEY"
+    },
+    "deepseek": {
+      "apiKey": "API_KEY"
     }
   }
 }

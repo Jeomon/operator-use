@@ -1,6 +1,7 @@
 """Tests for configuration models and load_config."""
 
 import json
+from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
@@ -16,11 +17,14 @@ from operator_use.config.service import (
     AgentDefinition,
     AgentDefaults,
     AgentsConfig,
+    PolicyDefinition,
+    GovernanceConfig,
     BindingMatch,
     AgentRouteBinding,
     Config,
     load_config,
 )
+from operator_use.cli.start import _build_governance_profile, _build_protected_paths
 
 
 # --- Channel configs ---
@@ -121,6 +125,11 @@ def test_agent_definition_default_workspace_none():
     assert a.workspace is None
 
 
+def test_agent_definition_policy():
+    a = AgentDefinition(id="boss", policy="manager")
+    assert a.policy == "manager"
+
+
 # --- AgentsConfig ---
 
 def test_agents_config_defaults():
@@ -160,6 +169,10 @@ def test_config_defaults():
     c = Config()
     assert c.bindings == []
     assert c.agents.list == []
+    assert c.policies == {}
+    assert c.governance.protect_codebase is True
+    assert c.governance.protect_runtime_config is True
+    assert c.governance.protected_paths == []
 
 
 def test_config_default_agent_none_when_empty():
@@ -181,8 +194,14 @@ def test_load_config_no_file(tmp_path):
 
 def test_load_config_from_json(tmp_path):
     data = {
+        "policies": {
+            "researcher": {"allowed_tools": ["web.*", "filesystem.read"]}
+        },
+        "governance": {
+            "protectedPaths": ["~/secret-area"]
+        },
         "agents": {
-            "list": [{"id": "json-agent", "browser_use": False}]
+            "list": [{"id": "json-agent", "browser_use": False, "policy": "researcher"}]
         }
     }
     (tmp_path / "config.json").write_text(json.dumps(data), encoding="utf-8")
@@ -194,3 +213,55 @@ def test_load_config_invalid_json_uses_defaults(tmp_path):
     (tmp_path / "config.json").write_text("{ invalid json }", encoding="utf-8")
     cfg = load_config(tmp_path)
     assert isinstance(cfg, Config)
+
+
+def test_build_governance_profile_from_named_policy():
+    cfg = Config(
+        policies={
+            "manager": PolicyDefinition(allowed_tools=["agents.*", "message.*"])
+        },
+        agents=AgentsConfig(list=[AgentDefinition(id="boss", policy="manager")]),
+    )
+
+    profile = _build_governance_profile(cfg, cfg.agents.list[0])
+
+    assert profile is not None
+    assert profile.allowed_tools == ["agents.*", "message.*"]
+
+
+def test_build_governance_profile_missing_policy_raises():
+    cfg = Config(agents=AgentsConfig(list=[AgentDefinition(id="boss", policy="missing")]))
+
+    with pytest.raises(ValueError, match="unknown policy"):
+        _build_governance_profile(cfg, cfg.agents.list[0])
+
+
+def test_build_protected_paths_includes_defaults_and_custom():
+    custom_path = Path("~/custom-guard").expanduser().resolve()
+    cfg = Config(
+        governance=GovernanceConfig(
+            protected_paths=[str(custom_path)],
+        )
+    )
+
+    protected_paths = _build_protected_paths(cfg)
+    protected_strings = {str(path) for path in protected_paths}
+
+    assert any(path.endswith("config.json") for path in protected_strings)
+    assert any(path.lower().endswith("operator-use") for path in protected_strings)
+    assert str(custom_path) in protected_strings
+
+
+def test_build_protected_paths_can_disable_defaults():
+    custom_path = Path("D:/custom/protected").resolve()
+    cfg = Config(
+        governance=GovernanceConfig(
+            protect_codebase=False,
+            protect_runtime_config=False,
+            protected_paths=[str(custom_path)],
+        )
+    )
+
+    protected_paths = _build_protected_paths(cfg)
+
+    assert protected_paths == [custom_path]

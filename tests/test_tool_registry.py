@@ -3,6 +3,7 @@
 import pytest
 from pydantic import BaseModel
 
+from operator_use.agent.tools.governance import GovernanceProfile
 from operator_use.agent.tools.registry import ToolRegistry
 from operator_use.tools.service import Tool
 
@@ -206,6 +207,29 @@ async def test_aexecute_async_tool():
     result = await reg.aexecute("async_echo", {"message": "hi"})
     assert result.success is True
     assert "async:hi" in result.output
+
+
+@pytest.mark.asyncio
+async def test_aexecute_governance_blocks_tool():
+    reg = ToolRegistry()
+    reg.register(echo_tool)
+    reg.set_extension("_governance_profile", GovernanceProfile(allowed_tools=["web.*"]))
+
+    result = await reg.aexecute("echo", {"message": "blocked"})
+
+    assert result.success is False
+    assert "not allowed" in result.error
+
+
+@pytest.mark.asyncio
+async def test_aexecute_governance_accepts_alias_pattern():
+    reg = ToolRegistry()
+    reg.register(echo_tool)
+    reg.set_extension("_governance_profile", GovernanceProfile(allowed_tools=["echo"]))
+
+    result = await reg.aexecute("echo", {"message": "allowed"})
+
+    assert result.success is True
 
 
 # --- register_tools / unregister_tools ---
