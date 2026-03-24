@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from operator_use.cli.tui import print_banner, print_start, print_step, select, text_input, confirm, print_end, print_end_first_install, console
+from operator_use.cli.tui import NavigateBack, clear_screen, print_banner, print_start, print_step, select, text_input, confirm, print_end, print_end_first_install, console
 
 # --- Registry Data ---
 
@@ -349,47 +349,99 @@ def _save_config(
 
 def run_first_install():
     """Linear step-by-step wizard for first-time installation (no config.json exists)."""
-    print_banner()
-    print_start()
+    def _render_step_screen(n: int, total: int, title: str, hint: str = "") -> None:
+        clear_screen()
+        print_banner()
+        print_start()
+        print_step(n, total, title, hint)
 
     api_keys_dict: dict[str, str] = {}
 
     def _need_key(prov_key: str, prov_name: str) -> bool:
         return prov_key not in api_keys_dict and prov_name not in OAUTH_PROVIDERS and prov_name not in NO_KEY_PROVIDERS
 
-    # Step 1/3 — Your agent
-    print_step(1, 3, "Your agent", "Give your agent a name — used for its workspace folder.")
-    raw = text_input("Name your agent (e.g. mybot, personal, work):", default="operator")
-    agent_id = _re.sub(r"[^a-z0-9_-]", "-", raw.strip().lower()) or "operator"
-
-    # Step 2/3 — Language model (required)
-    print_step(2, 3, "Language model", "This is the AI brain. Pick a provider you have access to.")
-    prov_name = select("Pick the LLM provider:", list(LLM_PROVIDERS.keys()))
-    prov_key = get_provider_key(prov_name)
-    if prov_name in OAUTH_PROVIDERS:
-        console.print("│")
-        console.print(f"│  [dim]ℹ  {OAUTH_NOTES[prov_name]}[/dim]")
-    elif _need_key(prov_key, prov_name):
-        api_keys_dict[prov_key] = text_input(f"Enter API Key for {prov_name}:", is_password=True)
-    llm_model = _select_model("Pick the LLM model:", LLM_PROVIDERS[prov_name])
-    llm_provider_key = prov_key
-
-    # Step 3/3 — Messaging channel (optional)
-    print_step(3, 3, "Messaging channel", "Connect a channel to message your agent. You can add more later with `operator channel add`.")
-    ch_name = select("Pick a channel to connect:", ["Telegram", "Discord", "Slack", "Skip for now"])
+    agent_id = "operator"
+    llm_provider_key = ""
+    llm_model = ""
     agent_channels: dict = {"telegram": "", "discord": "", "slack_bot": "", "slack_app": ""}
-    if ch_name != "Skip for now":
-        note = CHANNEL_NOTES.get(ch_name, "")
-        if note:
-            console.print("│")
-            console.print(f"│  [dim]{note}[/dim]")
-        if ch_name == "Telegram":
-            agent_channels["telegram"] = text_input("Enter Telegram Bot Token:", is_password=True)
-        elif ch_name == "Discord":
-            agent_channels["discord"] = text_input("Enter Discord Bot Token:", is_password=True)
-        elif ch_name == "Slack":
-            agent_channels["slack_bot"] = text_input("Enter Slack Bot Token (xoxb-...):", is_password=True)
-            agent_channels["slack_app"] = text_input("Enter Slack App Token (xapp-...):", is_password=True)
+
+    step = 0
+    while step < 3:
+        if step == 0:
+            _render_step_screen(1, 3, "Your agent", "Give your agent a name — used for its workspace folder.")
+            try:
+                raw = text_input("Name your agent (e.g. mybot, personal, work):", default=agent_id)
+            except NavigateBack:
+                continue
+            agent_id = _re.sub(r"[^a-z0-9_-]", "-", raw.strip().lower()) or "operator"
+            step += 1
+
+        elif step == 1:
+            prov_name = ""
+            prov_key = ""
+            substep = 0
+            while substep < 3:
+                _render_step_screen(2, 3, "Language model", "This is the AI brain. Pick a provider you have access to.")
+                try:
+                    if substep == 0:
+                        prov_name = select("Pick the LLM provider:", list(LLM_PROVIDERS.keys()))
+                        prov_key = get_provider_key(prov_name)
+                        substep = 1
+                    elif substep == 1:
+                        if prov_name in OAUTH_PROVIDERS:
+                            console.print("│")
+                            console.print(f"│  [dim]ℹ  {OAUTH_NOTES[prov_name]}[/dim]")
+                        elif _need_key(prov_key, prov_name):
+                            api_keys_dict[prov_key] = text_input(f"Enter API Key for {prov_name}:", is_password=True)
+                        substep = 2
+                    else:
+                        llm_model = _select_model("Pick the LLM model:", LLM_PROVIDERS[prov_name])
+                        llm_provider_key = prov_key
+                        step += 1
+                        break
+                except NavigateBack:
+                    if substep == 0:
+                        step = max(0, step - 1)
+                        break
+                    substep -= 1
+
+        else:
+            agent_channels = {"telegram": "", "discord": "", "slack_bot": "", "slack_app": ""}
+            ch_name = "Skip for now"
+            substep = 0
+            while substep < 3:
+                _render_step_screen(3, 3, "Messaging channel", "Connect a channel to message your agent. You can add more later with `operator channel add`.")
+                try:
+                    if substep == 0:
+                        ch_name = select("Pick a channel to connect:", ["Telegram", "Discord", "Slack", "Skip for now"])
+                        if ch_name == "Skip for now":
+                            step += 1
+                            break
+                        note = CHANNEL_NOTES.get(ch_name, "")
+                        if note:
+                            console.print("│")
+                            console.print(f"│  [dim]{note}[/dim]")
+                        substep = 1
+                    elif substep == 1:
+                        if ch_name == "Telegram":
+                            agent_channels["telegram"] = text_input("Enter Telegram Bot Token:", is_password=True)
+                            step += 1
+                            break
+                        if ch_name == "Discord":
+                            agent_channels["discord"] = text_input("Enter Discord Bot Token:", is_password=True)
+                            step += 1
+                            break
+                        agent_channels["slack_bot"] = text_input("Enter Slack Bot Token (xoxb-...):", is_password=True)
+                        substep = 2
+                    else:
+                        agent_channels["slack_app"] = text_input("Enter Slack App Token (xapp-...):", is_password=True)
+                        step += 1
+                        break
+                except NavigateBack:
+                    if substep == 0:
+                        step = max(0, step - 1)
+                        break
+                    substep -= 1
 
     agent_defs = [{
         "id": agent_id,
@@ -419,8 +471,12 @@ def run_first_install():
 
 
 def run_initial_setup():
-    print_banner()
-    print_start("Configure")
+    def _render_configure_screen() -> None:
+        clear_screen()
+        print_banner()
+        print_start("Configure")
+
+    _render_configure_screen()
 
     from operator_use.paths import get_userdata_dir
     _config_path = get_userdata_dir() / "config.json"
@@ -515,6 +571,7 @@ def run_initial_setup():
     # ── Per-agent submenu ─────────────────────────────────────────────────────
     def _agent_submenu(idx: int) -> None:
         while True:
+            _render_configure_screen()
             a = agent_defs[idx]
 
             if a["llm_provider_key"] and a["llm_model"]:
@@ -531,21 +588,27 @@ def run_initial_setup():
             bu_label = "enabled" if browser_use else "disabled"
             cu_label = "enabled" if computer_use else "disabled"
 
-            choice = select(f"Configure agent: {a['id']}", [
-                f"Rename         {a['id']}",
-                f"LLM            {a_llm_label}",
-                f"Channels       {ch_label}",
-                f"Browser Use    {bu_label}",
-                f"Computer Use   {cu_label}",
-                "Remove agent",
-                "← Back",
-            ])
+            try:
+                choice = select(f"Configure agent: {a['id']}", [
+                    f"Rename         {a['id']}",
+                    f"LLM            {a_llm_label}",
+                    f"Channels       {ch_label}",
+                    f"Browser Use    {bu_label}",
+                    f"Computer Use   {cu_label}",
+                    "Remove agent",
+                    "← Back",
+                ])
+            except NavigateBack:
+                break
 
             if choice.startswith("←"):
                 break
 
             elif choice.startswith("Rename"):
-                raw = text_input("New agent name:", default=a["id"])
+                try:
+                    raw = text_input("New agent name:", default=a["id"])
+                except NavigateBack:
+                    continue
                 new_id = _re.sub(r"[^a-z0-9_-]", "-", raw.strip().lower()) or a["id"]
                 if any(o["id"] == new_id for i2, o in enumerate(agent_defs) if i2 != idx):
                     console.print("│")
@@ -554,53 +617,95 @@ def run_initial_setup():
                     agent_defs[idx]["id"] = new_id
 
             elif choice.startswith("LLM"):
-                prov_choice = select("Pick LLM provider for this agent:", list(LLM_PROVIDERS.keys()))
-                prov_key = get_provider_key(prov_choice)
-                model = _select_model("Pick the LLM model:", LLM_PROVIDERS[prov_choice])
-                if prov_choice in OAUTH_PROVIDERS:
-                    console.print("│")
-                    console.print(f"│  [dim]ℹ  {OAUTH_NOTES[prov_choice]}[/dim]")
-                elif _need_key(prov_key, prov_choice):
-                    api_keys_dict[prov_key] = text_input(f"Enter API Key for {prov_choice}:", is_password=True)
-                agent_defs[idx]["llm_provider_key"] = prov_key
-                agent_defs[idx]["llm_model"] = model
+                prov_choice = ""
+                prov_key = ""
+                substep = 0
+                while substep < 3:
+                    _render_configure_screen()
+                    try:
+                        if substep == 0:
+                            prov_choice = select("Pick LLM provider for this agent:", list(LLM_PROVIDERS.keys()))
+                            prov_key = get_provider_key(prov_choice)
+                            substep = 1
+                        elif substep == 1:
+                            if prov_choice in OAUTH_PROVIDERS:
+                                console.print("│")
+                                console.print(f"│  [dim]ℹ  {OAUTH_NOTES[prov_choice]}[/dim]")
+                            elif _need_key(prov_key, prov_choice):
+                                api_keys_dict[prov_key] = text_input(f"Enter API Key for {prov_choice}:", is_password=True)
+                            substep = 2
+                        else:
+                            model = _select_model("Pick the LLM model:", LLM_PROVIDERS[prov_choice])
+                            agent_defs[idx]["llm_provider_key"] = prov_key
+                            agent_defs[idx]["llm_model"] = model
+                            break
+                    except NavigateBack:
+                        if substep == 0:
+                            break
+                        substep -= 1
 
             elif choice.startswith("Channels"):
                 ch = agent_defs[idx].setdefault("channels", {"telegram": "", "discord": "", "slack_bot": "", "slack_app": ""})
                 while True:
+                    _render_configure_screen()
                     tg_label  = "✓ configured" if ch.get("telegram")  else "not set"
                     dc_label  = "✓ configured" if ch.get("discord")   else "not set"
                     sl_label  = "✓ configured" if ch.get("slack_bot") else "not set"
-                    ch_choice = select(f"Channels for {a['id']}:", [
-                        f"Telegram   {tg_label}",
-                        f"Discord    {dc_label}",
-                        f"Slack      {sl_label}",
-                        "← Back",
-                    ])
+                    try:
+                        ch_choice = select(f"Channels for {a['id']}:", [
+                            f"Telegram   {tg_label}",
+                            f"Discord    {dc_label}",
+                            f"Slack      {sl_label}",
+                            "← Back",
+                        ])
+                    except NavigateBack:
+                        break
                     if ch_choice.startswith("←"):
                         break
                     elif ch_choice.startswith("Telegram"):
                         note = CHANNEL_NOTES.get("Telegram", "")
                         console.print("│")
                         console.print(f"│  [dim]{note}[/dim]")
-                        if ch.get("telegram") and not confirm("Replace existing Telegram token?"):
+                        try:
+                            if ch.get("telegram") and not confirm("Replace existing Telegram token?"):
+                                continue
+                            ch["telegram"] = text_input(f"Telegram Bot Token for {a['id']}:", is_password=True)
+                        except NavigateBack:
                             continue
-                        ch["telegram"] = text_input(f"Telegram Bot Token for {a['id']}:", is_password=True)
                     elif ch_choice.startswith("Discord"):
                         note = CHANNEL_NOTES.get("Discord", "")
                         console.print("│")
                         console.print(f"│  [dim]{note}[/dim]")
-                        if ch.get("discord") and not confirm("Replace existing Discord token?"):
+                        try:
+                            if ch.get("discord") and not confirm("Replace existing Discord token?"):
+                                continue
+                            ch["discord"] = text_input(f"Discord Bot Token for {a['id']}:", is_password=True)
+                        except NavigateBack:
                             continue
-                        ch["discord"] = text_input(f"Discord Bot Token for {a['id']}:", is_password=True)
                     elif ch_choice.startswith("Slack"):
                         note = CHANNEL_NOTES.get("Slack", "")
                         console.print("│")
                         console.print(f"│  [dim]{note}[/dim]")
-                        if ch.get("slack_bot") and not confirm("Replace existing Slack tokens?"):
-                            continue
-                        ch["slack_bot"] = text_input(f"Slack Bot Token (xoxb-...) for {a['id']}:", is_password=True)
-                        ch["slack_app"] = text_input(f"Slack App Token (xapp-...) for {a['id']}:", is_password=True)
+                        substep = 0
+                        while substep < 3:
+                            _render_configure_screen()
+                            console.print("│")
+                            console.print(f"│  [dim]{note}[/dim]")
+                            try:
+                                if substep == 0:
+                                    if ch.get("slack_bot") and not confirm("Replace existing Slack tokens?"):
+                                        break
+                                    substep = 1
+                                elif substep == 1:
+                                    ch["slack_bot"] = text_input(f"Slack Bot Token (xoxb-...) for {a['id']}:", is_password=True)
+                                    substep = 2
+                                else:
+                                    ch["slack_app"] = text_input(f"Slack App Token (xapp-...) for {a['id']}:", is_password=True)
+                                    break
+                            except NavigateBack:
+                                if substep == 0:
+                                    break
+                                substep -= 1
 
             elif choice.startswith("Browser Use"):
                 new_val = not agent_defs[idx].get("browser_use", True)
@@ -622,13 +727,19 @@ def run_initial_setup():
                 if len(agent_defs) <= 1:
                     console.print("│")
                     console.print("│  [red]Cannot remove the last agent.[/red]")
-                elif confirm(f"Remove agent '{a['id']}'?"):
-                    agent_defs.pop(idx)
-                    break
+                else:
+                    try:
+                        should_remove = confirm(f"Remove agent '{a['id']}'?")
+                    except NavigateBack:
+                        continue
+                    if should_remove:
+                        agent_defs.pop(idx)
+                        break
 
     # ── Agents submenu ────────────────────────────────────────────────────────
     def _agents_menu() -> None:
         while True:
+            _render_configure_screen()
             agent_choices = []
             for a in agent_defs:
                 if a["llm_provider_key"] and a["llm_model"]:
@@ -639,13 +750,19 @@ def run_initial_setup():
             agent_choices.append("+ Add agent")
             agent_choices.append("← Back")
 
-            choice = select("Manage Agents:", agent_choices)
+            try:
+                choice = select("Manage Agents:", agent_choices)
+            except NavigateBack:
+                break
 
             if choice.startswith("←"):
                 break
 
             elif choice.startswith("+"):
-                raw = text_input("New agent name:")
+                try:
+                    raw = text_input("New agent name:")
+                except NavigateBack:
+                    continue
                 new_id = _re.sub(r"[^a-z0-9_-]", "-", raw.strip().lower()) or "agent"
                 if any(a["id"] == new_id for a in agent_defs):
                     console.print("│")
@@ -670,68 +787,120 @@ def run_initial_setup():
     # ── ACP submenu ───────────────────────────────────────────────────────────
     def _acp_menu() -> None:
         while True:
+            _render_configure_screen()
             srv_label = f"enabled  port={acp_server.port}" if acp_server.enabled else "disabled"
             agents_label = f"{len(acp_agents)} registered" if acp_agents else "none"
-            choice = select("ACP (Agent Communication Protocol):", [
-                f"Server        {srv_label}",
-                f"Remote Agents {agents_label}",
-                "← Back",
-            ])
+            try:
+                choice = select("ACP (Agent Communication Protocol):", [
+                    f"Server        {srv_label}",
+                    f"Remote Agents {agents_label}",
+                    "← Back",
+                ])
+            except NavigateBack:
+                break
 
             if choice.startswith("←"):
                 break
 
             elif choice.startswith("Server"):
-                if confirm("Enable ACP server? (exposes this Operator as an ACP endpoint)"):
-                    acp_server.enabled = True
-                    raw_port = text_input("Port:", default=str(acp_server.port))
+                substep = 0
+                while substep < 4:
+                    _render_configure_screen()
                     try:
-                        acp_server.port = int(raw_port)
-                    except ValueError:
-                        pass
-                    raw_token = text_input("Auth token (leave blank for none):", default=acp_server.auth_token)
-                    acp_server.auth_token = raw_token.strip()
-                    raw_url = text_input("Public URL (leave blank to skip):", default=acp_server.public_url)
-                    acp_server.public_url = raw_url.strip()
-                else:
-                    acp_server.enabled = False
+                        if substep == 0:
+                            if not confirm("Enable ACP server? (exposes this Operator as an ACP endpoint)"):
+                                acp_server.enabled = False
+                                break
+                            acp_server.enabled = True
+                            substep = 1
+                        elif substep == 1:
+                            raw_port = text_input("Port:", default=str(acp_server.port))
+                            try:
+                                acp_server.port = int(raw_port)
+                            except ValueError:
+                                pass
+                            substep = 2
+                        elif substep == 2:
+                            raw_token = text_input("Auth token (leave blank for none):", default=acp_server.auth_token)
+                            acp_server.auth_token = raw_token.strip()
+                            substep = 3
+                        else:
+                            raw_url = text_input("Public URL (leave blank to skip):", default=acp_server.public_url)
+                            acp_server.public_url = raw_url.strip()
+                            break
+                    except NavigateBack:
+                        if substep == 0:
+                            break
+                        substep -= 1
 
             elif choice.startswith("Remote Agents"):
                 while True:
+                    _render_configure_screen()
                     agent_choices = [f"{name}  —  {entry.base_url}" for name, entry in acp_agents.items()]
                     agent_choices += ["+ Add agent", "← Back"]
-                    sub = select("Remote ACP Agents:", agent_choices)
+                    try:
+                        sub = select("Remote ACP Agents:", agent_choices)
+                    except NavigateBack:
+                        break
 
                     if sub.startswith("←"):
                         break
 
                     elif sub.startswith("+"):
-                        name = text_input("Agent name (e.g. claude-code):").strip()
-                        if not name:
-                            continue
-                        if name in acp_agents:
-                            console.print("│")
-                            console.print(f"│  [red]Agent '{name}' already registered.[/red]")
-                            continue
-                        base_url = text_input("Base URL (e.g. http://localhost:9000):").strip()
-                        agent_id = text_input("Remote agent ID (leave blank to auto-discover):", default="").strip()
-                        auth_token = text_input("Auth token (leave blank for none):", default="").strip()
-                        description = text_input("Description (shown to LLM):", default="").strip()
-                        acp_agents[name] = ACPAgentEntry(
-                            base_url=base_url,
-                            agent_id=agent_id,
-                            auth_token=auth_token,
-                            description=description,
-                        )
+                        name = ""
+                        base_url = ""
+                        agent_id = ""
+                        auth_token = ""
+                        description = ""
+                        substep = 0
+                        while substep < 5:
+                            _render_configure_screen()
+                            try:
+                                if substep == 0:
+                                    name = text_input("Agent name (e.g. claude-code):").strip()
+                                    if not name:
+                                        break
+                                    if name in acp_agents:
+                                        console.print("│")
+                                        console.print(f"│  [red]Agent '{name}' already registered.[/red]")
+                                        break
+                                    substep = 1
+                                elif substep == 1:
+                                    base_url = text_input("Base URL (e.g. http://localhost:9000):").strip()
+                                    substep = 2
+                                elif substep == 2:
+                                    agent_id = text_input("Remote agent ID (leave blank to auto-discover):", default="").strip()
+                                    substep = 3
+                                elif substep == 3:
+                                    auth_token = text_input("Auth token (leave blank for none):", default="").strip()
+                                    substep = 4
+                                else:
+                                    description = text_input("Description (shown to LLM):", default="").strip()
+                                    acp_agents[name] = ACPAgentEntry(
+                                        base_url=base_url,
+                                        agent_id=agent_id,
+                                        auth_token=auth_token,
+                                        description=description,
+                                    )
+                                    break
+                            except NavigateBack:
+                                if substep == 0:
+                                    break
+                                substep -= 1
 
                     else:
                         # Remove existing agent
                         matched = next((n for n in acp_agents if sub.startswith(n)), None)
-                        if matched and confirm(f"Remove agent '{matched}'?"):
+                        try:
+                            should_remove = bool(matched and confirm(f"Remove agent '{matched}'?"))
+                        except NavigateBack:
+                            continue
+                        if matched and should_remove:
                             del acp_agents[matched]
 
     # --- Main menu loop ---
     while True:
+        _render_configure_screen()
         stt_label    = f"{stt_provider_key} / {stt_model}" if stt_enabled else "disabled"
         tts_label    = f"{tts_provider_key} / {tts_model}" if tts_enabled else "disabled"
         agents_label = ", ".join(a["id"] for a in agent_defs)
@@ -742,63 +911,124 @@ def run_initial_setup():
         acp_agents_count = len(acp_agents)
         acp_label = f"{acp_srv_label}, {acp_agents_count} remote agent{'s' if acp_agents_count != 1 else ''}" if acp_server.enabled or acp_agents_count else "disabled"
 
-        choice = select("What would you like to configure?", [
-            f"STT           {stt_label}",
-            f"TTS           {tts_label}",
-            f"Heartbeat     {hb_label}",
-            f"Agents        {agents_label}",
-            f"ACP           {acp_label}",
-            "Save & Exit",
-        ])
+        try:
+            choice = select("What would you like to configure?", [
+                f"STT           {stt_label}",
+                f"TTS           {tts_label}",
+                f"Heartbeat     {hb_label}",
+                f"Agents        {agents_label}",
+                f"ACP           {acp_label}",
+                "Save & Exit",
+            ], allow_back=False)
+        except NavigateBack:
+            continue
 
         # ── STT ──────────────────────────────────────────────────────────────
         if choice.startswith("STT"):
-            if confirm("Enable Speech-to-Text (STT)?"):
-                prov_name = select("Pick the STT provider:", list(STT_PROVIDERS.keys()))
-                stt_provider_key = get_provider_key(prov_name)
-                stt_model = _select_model("Pick the STT model:", STT_PROVIDERS[prov_name])
-                if _need_key(stt_provider_key, prov_name):
-                    api_keys_dict[stt_provider_key] = text_input(f"Enter API Key for {prov_name}:", is_password=True)
-                stt_enabled = True
-            else:
-                stt_enabled = False
-                stt_provider_key = ""
-                stt_model = ""
+            prov_name = ""
+            substep = 0
+            while substep < 4:
+                _render_configure_screen()
+                try:
+                    if substep == 0:
+                        if not confirm("Enable Speech-to-Text (STT)?"):
+                            stt_enabled = False
+                            stt_provider_key = ""
+                            stt_model = ""
+                            break
+                        substep = 1
+                    elif substep == 1:
+                        prov_name = select("Pick the STT provider:", list(STT_PROVIDERS.keys()))
+                        stt_provider_key = get_provider_key(prov_name)
+                        substep = 2
+                    elif substep == 2:
+                        stt_model = _select_model("Pick the STT model:", STT_PROVIDERS[prov_name])
+                        substep = 3
+                    else:
+                        if _need_key(stt_provider_key, prov_name):
+                            api_keys_dict[stt_provider_key] = text_input(f"Enter API Key for {prov_name}:", is_password=True)
+                        stt_enabled = True
+                        break
+                except NavigateBack:
+                    if substep == 0:
+                        break
+                    substep -= 1
 
         # ── TTS ──────────────────────────────────────────────────────────────
         elif choice.startswith("TTS"):
-            if confirm("Enable Text-to-Speech (TTS)?"):
-                prov_name = select("Pick the TTS provider:", list(TTS_PROVIDERS.keys()))
-                tts_provider_key = get_provider_key(prov_name)
-                tts_model = _select_model("Pick the TTS model:", TTS_PROVIDERS[prov_name])
-                tts_voice = None
-                if prov_name in VOICES:
-                    tts_voice = select("Pick a voice:", VOICES[prov_name])
-                if _need_key(tts_provider_key, prov_name):
-                    api_keys_dict[tts_provider_key] = text_input(f"Enter API Key for {prov_name}:", is_password=True)
-                tts_enabled = True
-            else:
-                tts_enabled = False
-                tts_provider_key = ""
-                tts_model = ""
-                tts_voice = None
+            prov_name = ""
+            tts_voice = None
+            needs_voice = False
+            substep = 0
+            while substep < 5:
+                _render_configure_screen()
+                try:
+                    if substep == 0:
+                        if not confirm("Enable Text-to-Speech (TTS)?"):
+                            tts_enabled = False
+                            tts_provider_key = ""
+                            tts_model = ""
+                            tts_voice = None
+                            break
+                        substep = 1
+                    elif substep == 1:
+                        prov_name = select("Pick the TTS provider:", list(TTS_PROVIDERS.keys()))
+                        tts_provider_key = get_provider_key(prov_name)
+                        substep = 2
+                    elif substep == 2:
+                        tts_model = _select_model("Pick the TTS model:", TTS_PROVIDERS[prov_name])
+                        needs_voice = prov_name in VOICES
+                        substep = 3 if needs_voice else 4
+                    elif substep == 3:
+                        tts_voice = select("Pick a voice:", VOICES[prov_name])
+                        substep = 4
+                    else:
+                        if _need_key(tts_provider_key, prov_name):
+                            api_keys_dict[tts_provider_key] = text_input(f"Enter API Key for {prov_name}:", is_password=True)
+                        tts_enabled = True
+                        break
+                except NavigateBack:
+                    if substep == 0:
+                        break
+                    if substep == 4 and not needs_voice:
+                        substep = 2
+                    else:
+                        substep -= 1
 
         # ── Heartbeat ─────────────────────────────────────────────────────────
         elif choice.startswith("Heartbeat"):
-            heartbeat_enabled = confirm("Enable Heartbeat? (agent runs periodic self-maintenance tasks)")
-            if heartbeat_enabled:
-                hb_prov_name = select("Pick the LLM provider for Heartbeat:", list(LLM_PROVIDERS.keys()))
-                hb_prov_key  = get_provider_key(hb_prov_name)
-                heartbeat_llm_model = _select_model("Pick the Heartbeat LLM model:", LLM_PROVIDERS[hb_prov_name])
-                if hb_prov_name in OAUTH_PROVIDERS:
-                    console.print("│")
-                    console.print(f"│  [dim]ℹ  {OAUTH_NOTES[hb_prov_name]}[/dim]")
-                elif _need_key(hb_prov_key, hb_prov_name):
-                    api_keys_dict[hb_prov_key] = text_input(f"Enter API Key for {hb_prov_name}:", is_password=True)
-                heartbeat_llm_provider_key = hb_prov_key
-            else:
-                heartbeat_llm_provider_key = ""
-                heartbeat_llm_model = ""
+            hb_prov_name = ""
+            hb_prov_key = ""
+            substep = 0
+            while substep < 4:
+                _render_configure_screen()
+                try:
+                    if substep == 0:
+                        heartbeat_enabled = confirm("Enable Heartbeat? (agent runs periodic self-maintenance tasks)")
+                        if not heartbeat_enabled:
+                            heartbeat_llm_provider_key = ""
+                            heartbeat_llm_model = ""
+                            break
+                        substep = 1
+                    elif substep == 1:
+                        hb_prov_name = select("Pick the LLM provider for Heartbeat:", list(LLM_PROVIDERS.keys()))
+                        hb_prov_key = get_provider_key(hb_prov_name)
+                        substep = 2
+                    elif substep == 2:
+                        heartbeat_llm_model = _select_model("Pick the Heartbeat LLM model:", LLM_PROVIDERS[hb_prov_name])
+                        substep = 3
+                    else:
+                        if hb_prov_name in OAUTH_PROVIDERS:
+                            console.print("│")
+                            console.print(f"│  [dim]ℹ  {OAUTH_NOTES[hb_prov_name]}[/dim]")
+                        elif _need_key(hb_prov_key, hb_prov_name):
+                            api_keys_dict[hb_prov_key] = text_input(f"Enter API Key for {hb_prov_name}:", is_password=True)
+                        heartbeat_llm_provider_key = hb_prov_key
+                        break
+                except NavigateBack:
+                    if substep == 0:
+                        break
+                    substep -= 1
 
         # ── Agents ───────────────────────────────────────────────────────────
         elif choice.startswith("Agents"):

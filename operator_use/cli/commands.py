@@ -205,11 +205,16 @@ def channel_add():
 
     import json as _json
     from operator_use.cli.setup import configure_channel
+    from operator_use.cli.tui import NavigateBack
     from operator_use.config import ChannelsConfig
 
     data = _json.loads(config_path.read_text(encoding="utf-8"))
     existing = ChannelsConfig(**data.get("channels", {}))
-    updated = configure_channel(existing)
+    try:
+        updated = configure_channel(existing)
+    except NavigateBack:
+        console.print("[yellow]Channel setup cancelled.[/yellow]")
+        raise typer.Exit(1)
 
     data.setdefault("channels", {})
     data["channels"].update(updated.model_dump(by_alias=True, exclude_none=True))

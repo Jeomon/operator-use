@@ -1,3 +1,4 @@
+import os
 import sys
 from InquirerPy import inquirer
 from InquirerPy.base.control import Choice
@@ -5,6 +6,13 @@ from InquirerPy.utils import get_style
 from rich.console import Console
 
 console = Console()
+BACK_SIGNAL = "__operator_back__"
+ESCAPE_FLUSH_TIMEOUT_SECONDS = 0.01
+
+
+class NavigateBack(Exception):
+    """Raised when the user requests backward navigation in the TUI."""
+
 
 PRIMARY = "#e5c07b"
 SECONDARY = "#61afef"
@@ -58,14 +66,43 @@ def print_info(title: str, info_dict: dict):
         console.print(f"│ [bright_black]{k}:[/bright_black] [white]{v}[/white]")
     console.print("│")
 
-def select(message: str, choices: list, is_last: bool = False) -> str:
+
+def clear_screen() -> None:
+    """Clear the terminal in a way that works reliably across Windows shells."""
+    if os.name == "nt":
+        os.system("cls")
+    else:
+        console.clear(home=True)
+
+
+def _execute_prompt(prompt, allow_back: bool = True):
+    app = getattr(prompt, "application", None)
+    if app is None:
+        session = getattr(prompt, "_session", None)
+        app = getattr(session, "app", None)
+
+    if app is not None:
+        # Avoid the default prompt_toolkit delay when disambiguating Escape vs Alt+key.
+        app.ttimeoutlen = ESCAPE_FLUSH_TIMEOUT_SECONDS
+
+    if allow_back:
+        @prompt.register_kb("escape")
+        def _go_back(event):
+            event.app.exit(result=BACK_SIGNAL)
+
+    result = prompt.execute()
+    if result == BACK_SIGNAL:
+        raise NavigateBack
+    return result
+
+def select(message: str, choices: list, is_last: bool = False, allow_back: bool = True) -> str:
     console.print(f"[bold {PRIMARY}]│[/bold {PRIMARY}]")
 
     formatted_choices = []
     for c in choices:
         formatted_choices.append(Choice(c, f"o {c}"))
 
-    result = inquirer.select(
+    prompt = inquirer.select(
         message=message,
         choices=formatted_choices,
         qmark="◆",
@@ -73,7 +110,8 @@ def select(message: str, choices: list, is_last: bool = False) -> str:
         pointer="◉", # The active pointer replaces the margin slot before the Choice item
         instruction=" ",
         style=clack_style,
-    ).execute()
+    )
+    result = _execute_prompt(prompt, allow_back=allow_back)
 
     if result is None:
         console.print("└ Cancelled.")
@@ -81,21 +119,22 @@ def select(message: str, choices: list, is_last: bool = False) -> str:
 
     return result
 
-def text_input(message: str, is_password: bool = False, is_last: bool = False, default: str = "") -> str:
+def text_input(message: str, is_password: bool = False, is_last: bool = False, default: str = "", allow_back: bool = True) -> str:
     console.print(f"[bold {PRIMARY}]│[/bold {PRIMARY}]")
 
     if is_password:
-        result = inquirer.secret(
+        prompt = inquirer.secret(
             message=message,
             qmark="◆",
             amark="◇",
             style=clack_style,
-        ).execute()
+        )
     else:
         kwargs = dict(message=message, qmark="◆", amark="◇", style=clack_style)
         if default:
             kwargs["default"] = default
-        result = inquirer.text(**kwargs).execute()
+        prompt = inquirer.text(**kwargs)
+    result = _execute_prompt(prompt, allow_back=allow_back)
 
     if result is None:
         console.print("└ Cancelled.")
@@ -103,16 +142,17 @@ def text_input(message: str, is_password: bool = False, is_last: bool = False, d
 
     return result
 
-def confirm(message: str, is_last: bool = False) -> bool:
+def confirm(message: str, is_last: bool = False, allow_back: bool = True) -> bool:
     console.print(f"[bold {PRIMARY}]│[/bold {PRIMARY}]")
 
-    result = inquirer.confirm(
+    prompt = inquirer.confirm(
         message=message,
         qmark="◆",
         amark="◇",
         default=True,
         style=clack_style,
-    ).execute()
+    )
+    result = _execute_prompt(prompt, allow_back=allow_back)
 
     if result is None:
         console.print("└ Cancelled.")
