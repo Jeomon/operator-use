@@ -16,7 +16,7 @@ from operator_use.agent.tools import ToolRegistry, BUILTIN_TOOLS
 from operator_use.bus import IncomingMessage
 from operator_use.providers.events import LLMEventType, LLMStreamEventType
 from operator_use.session import SessionStore, Session
-from operator_use.subagent import SubagentStore
+from operator_use.subagent.manager import SubagentManager
 from operator_use.process import ProcessStore
 from operator_use.agent.hooks import Hooks, HookEvent
 from operator_use.agent.hooks.events import (
@@ -72,7 +72,7 @@ class Agent:
         self.cron = cron
         self.gateway = gateway
         self.bus = bus
-        self.subagent_store = SubagentStore(llm=llm, bus=bus)
+        self.subagent_store = SubagentManager(llm=llm, bus=bus)
         self.process_store = ProcessStore()
         self.hooks = Hooks()
 
@@ -431,3 +431,5 @@ class Agent:
                         session.add_message(msg)
                         return msg
         raise RuntimeError(f"Agent exceeded max_iterations ({self.max_iterations})")
+
+
