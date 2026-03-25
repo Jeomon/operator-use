@@ -225,7 +225,6 @@ async def test_observation_masking_keeps_recent_count_exact():
 
     non_system = [m for m in result if not isinstance(m, SystemMessage)]
     recent = non_system[-4:]
-    older = non_system[:-4]
 
     assert [m.content for m in recent] == ["6", "7", "8", "9"]
     assert all(m.content != "[masked — call the tool again if needed]" for m in recent)
