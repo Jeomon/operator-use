@@ -39,6 +39,7 @@ class BrowserPlugin(Plugin):
         if self._enabled:
             if self.browser is not None:
                 registry.set_extension("browser", self.browser)
+                registry.set_extension("_browser", self.browser)
             for tool in self.get_tools():
                 registry.register(tool)
 

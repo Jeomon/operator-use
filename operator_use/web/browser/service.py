@@ -76,6 +76,9 @@ class Browser:
         self._mouse_x: int = 0
         self._mouse_y: int = 0
 
+        # Resolved WebSocket URL when attach_to_existing uses DevToolsActivePort
+        self._resolved_attach_ws_url: str | None = None
+
         # Watchdogs (attached during init_tabs)
         from operator_use.web.watchdog import DialogWatchdog, CrashWatchdog, DownloadWatchdog
         self._watchdogs = [
@@ -121,11 +124,18 @@ class Browser:
 
         await self._resolve_ws_url()
 
+        # attach_to_existing: if DevToolsActivePort gave us an exact ws URL, use it directly
+        if self.config.attach_to_existing and self._resolved_attach_ws_url:
+            from operator_use.web.cdp import Client
+            self._client = Client(self._resolved_attach_ws_url)
+            self._client.on_disconnect = self._on_browser_disconnected
+            await self._client.__aenter__()
+            return
+
         port = self.config.cdp_port
         for attempt in range(10):
             try:
-                # Verify we connected to the correct browser before accepting
-                if not await self._is_correct_browser(port):
+                if not self.config.attach_to_existing and not await self._is_correct_browser(port):
                     # Wrong browser still on port — kill and re-launch
                     self._kill_on_port(port)
                     await asyncio.sleep(1.0)
@@ -153,10 +163,47 @@ class Browser:
             await self.init_browser()
             await self.init_tabs()
 
+    def _read_devtools_active_port(self) -> str | None:
+        """Read DevToolsActivePort file written by Chrome/Edge on startup.
+
+        The file contains two lines: the CDP port number and the WebSocket path.
+        e.g.:
+            9222
+            /devtools/browser/<id>
+
+        Returns the full ws:// URL, or None if the file is absent or unreadable.
+        """
+        if not self.config.user_data_dir:
+            return None
+        port_file = Path(self.config.user_data_dir) / 'DevToolsActivePort'
+        try:
+            lines = [l.strip() for l in port_file.read_text(encoding='utf-8').splitlines() if l.strip()]
+            if len(lines) < 2:
+                return None
+            port, ws_path = lines[0], lines[1]
+            if not port.isdigit():
+                return None
+            return f'ws://127.0.0.1:{port}{ws_path}'
+        except Exception:
+            return None
+
     async def _resolve_ws_url(self):
         if self.config.wss_url:
             return
         port = self.config.cdp_port
+        if self.config.attach_to_existing:
+            # Prefer the DevToolsActivePort file (exact ws URL, no polling needed).
+            # Fall back to /json/version polling if user_data_dir is not set.
+            ws_url = self._read_devtools_active_port()
+            if ws_url:
+                self._resolved_attach_ws_url = ws_url
+                return
+            if not await self._is_port_responsive(port):
+                raise RuntimeError(
+                    f'attach_to_existing=True but nothing is listening on port {port}. '
+                    f'Launch your browser with --remote-debugging-port={port} first.'
+                )
+            return
         if await self._is_port_responsive(port):
             if await self._is_correct_browser(port):
                 return  # correct browser already running, just connect
@@ -182,9 +229,9 @@ class Browser:
             async with httpx.AsyncClient() as http:
                 resp = await http.get(f'http://localhost:{port}/json/version', timeout=1.0)
                 browser_str = resp.json().get('Browser', '').lower()
-            if self.config.browser == 'chrome':
+            if self.config.resolved_browser() == 'chrome':
                 return 'chrome' in browser_str and 'edg' not in browser_str
-            elif self.config.browser == 'edge':
+            elif self.config.resolved_browser() == 'edge':
                 return 'edg' in browser_str
             return False
         except Exception:
@@ -325,7 +372,7 @@ class Browser:
         if self.config.browser_instance_dir:
             return self.config.browser_instance_dir
 
-        browser = self.config.browser
+        browser = self.config.resolved_browser()
         if sys.platform == 'win32':
             local = Path(os.environ.get('LOCALAPPDATA', ''))
             candidates = {
@@ -401,19 +448,21 @@ class Browser:
         finally:
             self._client = None
 
-        # Terminate browser process
-        try:
-            if self._process:
-                self._process.terminate()
-                self._process.wait(timeout=5)
-        except Exception:
+        # Terminate browser process — skip if we attached to an existing browser
+        # (we don't own that process, so we must not kill it)
+        if not self.config.attach_to_existing:
             try:
                 if self._process:
-                    self._process.kill()
+                    self._process.terminate()
+                    self._process.wait(timeout=5)
             except Exception:
-                pass
-        finally:
-            self._process = None
+                try:
+                    if self._process:
+                        self._process.kill()
+                except Exception:
+                    pass
+            finally:
+                self._process = None
 
     # ------------------------------------------------------------------
     # CDP wrappers
