@@ -1,4 +1,14 @@
-"""SubagentManager - registry for spawning, tracking, and cancelling subagents."""
+"""SubagentManager — spawns and tracks ephemeral subagent workers.
+
+Each Agent owns one SubagentManager.  When the ``subagents`` tool is called,
+the manager creates a fresh Subagent, runs it as a background asyncio Task, and
+tracks its record until completion.  The Subagent itself is discarded once done;
+only the SubagentRecord (result, status, timestamps) is kept in history.
+
+This is distinct from local-agent delegation (``localagents`` tool), which
+forwards tasks to persistent Agent peers already running in the Orchestrator.
+See ``subagent/service.py`` for the full design rationale.
+"""
 
 import asyncio
 import uuid

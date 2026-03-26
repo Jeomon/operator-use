@@ -1,4 +1,33 @@
-"""SubagentRunner — isolated agent loop that executes a delegated task."""
+"""Subagent — ephemeral, anonymous worker that executes a single delegated task.
+
+Design contract
+---------------
+A subagent is the opposite of a local agent:
+
+* **No identity** — no workspace, no session store, no memory, no hooks, no
+  plugins.  It is a blank executor: system prompt + tool registry + loop →
+  result → gone.
+* **No persistence** — once the task finishes (or fails) the Subagent instance
+  is discarded.  Nothing it does is remembered beyond the result string it
+  returns to the caller via the bus.
+* **Globally configured** — all subagents spawned by a given Agent share the
+  same behaviour, controlled by ``agents.defaults.subagent`` in config (tool
+  profile, system prompt override, max iterations).
+
+When to use a subagent vs a local agent
+-----------------------------------------
+Use a **subagent** (``subagents`` tool) when:
+  - The task is self-contained and its result is all that matters.
+  - You want true parallelism — multiple subagents run concurrently and each
+    announces its result back to the session when done.
+  - You don't need the worker to remember anything after the task.
+
+Use a **local agent** (``localagents`` tool) when:
+  - The target is a named, persistent peer already running in the Orchestrator.
+  - The peer has its own workspace, memory, and specialised tools/plugins.
+  - You want to delegate to a known capability (e.g. a "research" or "coding"
+    agent defined in config) rather than spinning up an anonymous worker.
+"""
 
 import asyncio
 import logging
@@ -29,7 +58,11 @@ Do not send messages to the user — your final response is relayed by the main 
 
 
 class Subagent:
-    """Runs an isolated agent loop for a single delegated task."""
+    """Ephemeral worker that runs an isolated LLM loop for one delegated task.
+
+    Lifecycle: created by SubagentManager → runs → announces result via bus →
+    discarded.  Has no workspace, sessions, memory, or hooks of its own.
+    """
 
     def __init__(self, llm: "BaseChatLLM", bus: Bus, config: "SubagentConfig | None" = None) -> None:
         self.llm = llm

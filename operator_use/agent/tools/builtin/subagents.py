@@ -1,4 +1,12 @@
-"""Subagents tool — create and list background subagent tasks."""
+"""Subagents tool — spawn ephemeral anonymous workers for parallel or background tasks.
+
+Use this tool when you need to fire off self-contained work without caring about
+who does it.  Each subagent is a blank executor: no name, no workspace, no memory.
+It runs its task with a fresh tool registry and disappears when done.
+
+For delegating to a *named, persistent* peer agent that has its own workspace and
+specialisation, use the ``localagents`` tool instead.
+"""
 
 from datetime import datetime
 from typing import Literal, Optional
@@ -41,14 +49,19 @@ def _format_duration(started: datetime, finished: datetime | None) -> str:
 @Tool(
     name="subagents",
     description=(
-        "Manage background subagents. "
-        "Use 'create' to delegate a long-running or parallelizable task to an isolated subagent — "
-        "it runs independently with filesystem, web, and terminal tools. "
-        "IMPORTANT: after calling 'create', do NOT poll with 'list' — the result is automatically "
-        "delivered back to this conversation when the subagent finishes. Just inform the user and end your turn. "
-        "Use 'list' only when the user explicitly asks to see subagent status. "
-        "Use 'cancel' to stop a running subagent by task_id. "
-        "Subagents cannot spawn further subagents."
+        "Spawn ephemeral anonymous workers for parallel or fire-and-forget tasks.\n\n"
+        "A subagent has no identity, no workspace, and no memory — it is a blank executor "
+        "that runs a task with filesystem, web, and terminal tools, then disappears. "
+        "Use this when you want parallel workers for self-contained work and don't need "
+        "the worker to remember anything.\n\n"
+        "To delegate to a named peer agent that has its own workspace and specialisation, "
+        "use the 'localagents' tool instead.\n\n"
+        "Actions:\n"
+        "  create — spawn a new background worker (returns task_id immediately). "
+        "After calling create, END YOUR TURN — the result is delivered back automatically "
+        "when done. Do not poll with 'list'.\n"
+        "  list   — show all workers and their status (only when user explicitly asks).\n"
+        "  cancel — stop a running worker by task_id."
     ),
     model=Subagents,
 )

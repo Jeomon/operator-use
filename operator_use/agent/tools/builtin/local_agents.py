@@ -1,4 +1,31 @@
-"""Local agents tool — call other configured Operator agents in-process."""
+"""Local agents tool — delegate tasks to persistent peer agents in the Orchestrator.
+
+Design contract
+---------------
+Local agents are **persistent, named agents** that live for the lifetime of the
+Operator process.  They are defined in config (``agents.list``), built at
+startup, and held in the Orchestrator's agents registry.  Each one has:
+
+* A dedicated workspace (files, memory, skills)
+* Its own session store (per-user conversation history)
+* Its own LLM config, tool profile, plugins, and prompt mode
+* Its own channels (optional — a local agent may have no public channel)
+
+Delegating to a local agent (this tool) is fundamentally different from
+spawning a subagent (``subagents`` tool):
+
+| | Local agent | Subagent |
+|---|---|---|
+| Lifetime | Process lifetime | Per-task |
+| Workspace | Dedicated | None |
+| Memory / sessions | Persistent | None |
+| Identity | Named, configured | Anonymous |
+| Created | At startup from config | On demand by SubagentManager |
+| Use when | Delegating to a specialised peer | Fire-and-forget parallel work |
+
+Circular delegation is blocked via a delegation chain passed through message
+metadata, so A → B → A raises an error rather than looping forever.
+"""
 
 from __future__ import annotations
 
@@ -115,9 +142,18 @@ async def _run_detached(
 @Tool(
     name="localagents",
     description=(
-        "Call other configured local Operator agents in-process. "
-        "Useful for a manager agent coordinating specialized agents on one request. "
-        "Use detached=True to run an agent in the background — result is delivered automatically."
+        "Delegate a task to a persistent peer agent running in this Operator instance.\n\n"
+        "Local agents are long-lived, named agents defined in config — each has its own "
+        "workspace, memory, tool profile, and specialisation. Use this tool when you want "
+        "to hand off work to a specific named peer (e.g. a 'research' or 'coding' agent) "
+        "rather than spinning up an anonymous background worker.\n\n"
+        "Actions:\n"
+        "  agents — list all available local agents and their capabilities.\n"
+        "  run    — send a scoped task to a named peer and wait for its result.\n"
+        "           Set detached=True to run in the background; the result is delivered "
+        "back to this conversation automatically when done — end your turn immediately after.\n\n"
+        "Use the 'subagents' tool instead when you need anonymous parallel workers with no "
+        "persistent state."
     ),
     model=LocalAgents,
 )
