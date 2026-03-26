@@ -9,7 +9,6 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from operator_use.computer.plugin import ComputerPlugin, SYSTEM_PROMPT
-from operator_use.agent.tools.registry import ToolRegistry
 from operator_use.agent.hooks.service import Hooks
 from operator_use.agent.hooks.events import HookEvent
 
@@ -158,7 +157,6 @@ async def test_state_hook_appends_desktop_state():
 
     import asyncio
     loop = asyncio.get_event_loop()
-    original_run = loop.run_in_executor
     async def _fake_executor(exc, fn):
         return fn()
     plugin.desktop.get_state = MagicMock(return_value=mock_state)

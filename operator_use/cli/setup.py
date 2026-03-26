@@ -237,6 +237,31 @@ def get_provider_key(name: str) -> str:
     return key_map.get(name, name.lower())
 
 
+def _get_ollama_models() -> list[tuple[str, str]]:
+    """Query the local Ollama server for installed models."""
+    try:
+        from ollama import Client
+        client = Client()
+        response = client.list()
+        models = response.models if hasattr(response, "models") else response.get("models", [])
+        if models:
+            return [(m.model if hasattr(m, "model") else m["name"],
+                     m.model if hasattr(m, "model") else m["name"]) for m in models]
+    except Exception:
+        pass
+    return []
+
+
+def _get_model_options(prov_name: str) -> list[tuple[str, str]]:
+    """Return model options for a provider. Ollama queries the local server dynamically."""
+    if prov_name == "Ollama":
+        models = _get_ollama_models()
+        if models:
+            return models
+        console.print("[yellow]⚠  Could not reach Ollama or no models installed. Run [bold]ollama pull <model>[/bold] first.[/yellow]")
+    return LLM_PROVIDERS[prov_name]
+
+
 def _select_model(label: str, options: list[tuple[str, str]]) -> str:
     custom_label = "Custom (enter model ID)..."
     display_names = [d for d, _ in options] + [custom_label]
@@ -416,7 +441,7 @@ def run_first_install():
                     console.print(f"│  [dim]ℹ  {OAUTH_NOTES[prov_name]}[/dim]")
                 elif _need_key(prov_key, prov_name):
                     api_keys_dict[prov_key] = text_input(f"Enter API Key for {prov_name}:", is_password=True)
-                llm_model = _select_model("Pick the LLM model:", LLM_PROVIDERS[prov_name])
+                llm_model = _select_model("Pick the LLM model:", _get_model_options(prov_name))
                 llm_provider_key = prov_key
                 step = 2
                 continue
@@ -564,7 +589,7 @@ def run_initial_setup():
         """Shared LLM picker. Returns (provider_key, model)."""
         prov_name = select("Pick the LLM provider:", list(LLM_PROVIDERS.keys()))
         prov_key  = get_provider_key(prov_name)
-        model     = _select_model("Pick the LLM model:", LLM_PROVIDERS[prov_name])
+        model     = _select_model("Pick the LLM model:", _get_model_options(prov_name))
         if prov_name in OAUTH_PROVIDERS:
             console.print("│")
             console.print(f"│  [dim]ℹ  {OAUTH_NOTES[prov_name]}[/dim]")
@@ -629,7 +654,7 @@ def run_initial_setup():
                 elif choice.startswith("LLM"):
                     prov_choice = select("Pick LLM provider for this agent:", list(LLM_PROVIDERS.keys()))
                     prov_key = get_provider_key(prov_choice)
-                    model = _select_model("Pick the LLM model:", LLM_PROVIDERS[prov_choice])
+                    model = _select_model("Pick the LLM model:", _get_model_options(prov_choice))
                     if prov_choice in OAUTH_PROVIDERS:
                         console.print("│")
                         console.print(f"│  [dim]ℹ  {OAUTH_NOTES[prov_choice]}[/dim]")

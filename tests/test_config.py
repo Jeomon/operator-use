@@ -1,8 +1,6 @@
 """Tests for configuration models and load_config."""
 
 import json
-import pytest
-from pydantic import ValidationError
 
 from operator_use.config.service import (
     TelegramConfig,
