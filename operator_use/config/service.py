@@ -132,19 +132,28 @@ class AgentRouteBinding(Base):
     match: BindingMatch = Field(default_factory=BindingMatch)
 
 
-class AgentDefaults(Base):
-    """Default settings shared across all agents (can be overridden per agent)."""
-
-    max_tool_iterations: int = 40
-    streaming: bool = True
-
-
 class ToolsConfig(Base):
     """Per-agent tool configuration."""
 
     profile: str = "full"  # Base preset: "minimal", "coding", or "full"
     also_allow: List[str] = Field(default_factory=list)  # Tool names to add on top of profile
     deny: List[str] = Field(default_factory=list)         # Tool names to remove from resolved list
+
+
+class SubagentConfig(Base):
+    """Global subagent configuration — applies to all subagents spawned by any agent."""
+
+    max_iterations: int = 20
+    system_prompt: str = ""  # If empty, subagent uses its built-in default system prompt
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
+
+
+class AgentDefaults(Base):
+    """Default settings shared across all agents (can be overridden per agent)."""
+
+    max_tool_iterations: int = 40
+    streaming: bool = True
+    subagent: SubagentConfig = Field(default_factory=SubagentConfig)
 
 
 class AgentDefinition(Base):
@@ -159,6 +168,8 @@ class AgentDefinition(Base):
     computer_use: bool = False  # Enable desktop/computer-use (GUI automation)
     browser_use: bool = True    # Enable browser-use (Chrome DevTools Protocol)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)  # Tool profile + allow/deny
+    prompt_mode: str = "full"   # Prompt mode: "full", "minimal", or "none"
+    system_prompt: str = ""     # Freeform instructions appended to every system prompt call
 
     @model_validator(mode="after")
     def check_exclusive_use(self) -> "AgentDefinition":

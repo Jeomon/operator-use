@@ -116,15 +116,15 @@ When you need to remember something, write to {workspace_path}/memory/MEMORY.md
         self,
         is_voice: bool = False,
         prompt_mode: PromptMode = PromptMode.FULL,
-        extra_system_prompt: str | None = None,
+        system_prompt: str | None = None,
     ) -> str:
         if prompt_mode == PromptMode.NONE:
             parts = [
                 "You are a subagent. Complete the delegated task and return your findings clearly. "
                 "Do not send messages to the user — your response is relayed by the delegating agent."
             ]
-            if extra_system_prompt:
-                parts.append(extra_system_prompt)
+            if system_prompt:
+                parts.append(system_prompt)
             return "\n\n".join(parts)
 
         parts = []
@@ -146,8 +146,8 @@ Available Skills:
             if memory_context := self.memory.get_memory_context():
                 parts.append(memory_context)
 
-        if extra_system_prompt:
-            parts.append(f"## Task Context\n\n{extra_system_prompt}")
+        if system_prompt:
+            parts.append(f"## Task Context\n\n{system_prompt}")
 
         if self._plugin_prompt_sections:
             parts.extend(self._plugin_prompt_sections)
@@ -214,13 +214,13 @@ You are a helpful personal assistant.
         is_voice: bool = False,
         session_id: str | None = None,
         prompt_mode: PromptMode = PromptMode.FULL,
-        extra_system_prompt: str | None = None,
+        system_prompt: str | None = None,
     ) -> list[BaseMessage]:
         """Build messages: [System, history]."""
         messages = [SystemMessage(content=self.build_system_prompt(
             is_voice=is_voice,
             prompt_mode=prompt_mode,
-            extra_system_prompt=extra_system_prompt,
+            system_prompt=system_prompt,
         ))]
         messages.extend(self._hydrate_history(history))
         return messages

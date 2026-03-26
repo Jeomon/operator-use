@@ -206,6 +206,7 @@ def _build_agents(config: Config, cron, gateway, bus) -> dict[str, Agent]:
             deny=tools_cfg.deny,
         )
 
+        from operator_use.agent.context.service import PromptMode
         agents[defn.id] = Agent(
             llm=llm,
             agent_id=defn.id,
@@ -216,6 +217,9 @@ def _build_agents(config: Config, cron, gateway, bus) -> dict[str, Agent]:
             gateway=gateway,
             bus=bus,
             tools=resolved_tools,
+            prompt_mode=PromptMode(defn.prompt_mode),
+            system_prompt=defn.system_prompt,
+            subagent_config=defaults.subagent,
             acp_registry=config.acp_agents,
             plugins=plugins,
         )

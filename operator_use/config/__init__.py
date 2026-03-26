@@ -19,6 +19,8 @@ from operator_use.config.service import (
     ACPAgentEntry,
     ACPServerSettings,
     HeartbeatConfig,
+    ToolsConfig,
+    SubagentConfig,
 )
 
 __all__ = [
@@ -42,4 +44,6 @@ __all__ = [
     "ACPAgentEntry",
     "ACPServerSettings",
     "HeartbeatConfig",
+    "ToolsConfig",
+    "SubagentConfig",
 ]

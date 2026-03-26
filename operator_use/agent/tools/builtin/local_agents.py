@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field
 from operator_use.bus.views import IncomingMessage, TextPart
 from operator_use.messages import HumanMessage
 from operator_use.tools import Tool, ToolResult
-from operator_use.agent.context.service import PromptMode
 
 LOCAL_AGENT_DELEGATION_CHAIN = "_local_agent_delegation_chain"
 
@@ -53,14 +52,6 @@ def _agent_capabilities(agent) -> str:
     return ", ".join(caps) if caps else "general"
 
 
-def _delegation_context(from_agent: str, to_agent: str) -> str:
-    return (
-        f"You are agent '{to_agent}', acting as a worker delegated a task by agent '{from_agent}'.\n"
-        "Complete the task and return your findings clearly.\n"
-        "Do not send messages to the user — your response goes back to the delegating agent."
-    )
-
-
 def _delegation_chain_from_metadata(metadata: dict[str, Any] | None) -> list[str]:
     if not isinstance(metadata, dict):
         return []
@@ -83,11 +74,9 @@ async def _run_detached(
     reply_channel: str,
     reply_chat_id: str,
     reply_account_id: str,
-    delegating_agent_id: str = "",
 ) -> None:
     """Run a local agent in the background and announce the result via the bus."""
     logger.info(f"[{task_id}] detached local agent '{agent_name}' started")
-    extra = _delegation_context(delegating_agent_id, agent_name)
     try:
         response = await target.run(
             message=message,
@@ -95,8 +84,6 @@ async def _run_detached(
             incoming=incoming,
             publish_stream=None,
             pending_replies=None,
-            prompt_mode=PromptMode.MINIMAL,
-            extra_system_prompt=extra,
         )
         result = str(response.content or "")
         status = "completed"
@@ -227,7 +214,6 @@ async def localagents(
                 reply_channel=parent_channel,
                 reply_chat_id=parent_chat_id,
                 reply_account_id=parent_account_id,
-                delegating_agent_id=current_agent_id,
             ),
             name=f"localagent-{task_id}",
         )
@@ -243,7 +229,5 @@ async def localagents(
         incoming=incoming,
         publish_stream=None,
         pending_replies=None,
-        prompt_mode=PromptMode.MINIMAL,
-        extra_system_prompt=_delegation_context(current_agent_id, name),
     )
     return ToolResult.success_result(str(response.content or ""))

@@ -10,15 +10,16 @@ from operator_use.subagent.views import SubagentRecord
 
 if TYPE_CHECKING:
     from operator_use.providers.base import BaseChatLLM
+    from operator_use.config.service import SubagentConfig
 
 
 class SubagentManager:
     """Registry that spawns isolated subagent tasks and tracks their lifecycle."""
 
-    def __init__(self, llm: "BaseChatLLM", bus: Bus) -> None:
+    def __init__(self, llm: "BaseChatLLM", bus: Bus, config: "SubagentConfig | None" = None) -> None:
         from operator_use.subagent.service import Subagent
 
-        self._runner = Subagent(llm=llm, bus=bus)
+        self._runner = Subagent(llm=llm, bus=bus, config=config)
         self._tasks: dict[str, asyncio.Task] = {}
         self._session_tasks: dict[str, set[str]] = {}
         self._records: dict[str, SubagentRecord] = {}

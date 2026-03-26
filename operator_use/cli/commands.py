@@ -1021,8 +1021,13 @@ def agents_list():
 def agents_add(
     agent_id: str = typer.Argument(..., help="Agent ID (e.g. 'work', 'personal')."),
     workspace: str = typer.Option("", "--workspace", "-w", help="Custom workspace path (default: ~/.operator-use/workspaces/<id>)."),
-    provider: str = typer.Option("", "--provider", "-p", help="LLM provider override (e.g. 'anthropic')."),
-    model: str = typer.Option("", "--model", "-m", help="LLM model override (e.g. 'claude-opus-4-6')."),
+    provider: str = typer.Option("", "--provider", "-p", help="LLM provider (e.g. 'anthropic')."),
+    model: str = typer.Option("", "--model", "-m", help="LLM model (e.g. 'claude-opus-4-6')."),
+    prompt_mode: str = typer.Option("", "--prompt-mode", help="Prompt mode: full, minimal, or none."),
+    system_prompt: str = typer.Option("", "--system-prompt", "-s", help="Freeform instructions appended to every system prompt."),
+    tools_profile: str = typer.Option("", "--tools-profile", help="Tool profile: minimal, coding, or full."),
+    tools_allow: list[str] = typer.Option([], "--tools-allow", help="Extra tool names to add on top of the profile."),
+    tools_deny: list[str] = typer.Option([], "--tools-deny", help="Tool names to remove from the profile."),
 ):
     """Add a new agent and create its workspace."""
     from operator_use.cli.start import copy_templates_to_workspace, _resolve_agent_workspace
@@ -1047,6 +1052,19 @@ def agents_add(
             entry["workspace"] = workspace
         if provider and model:
             entry["llmConfig"] = {"provider": provider, "model": model}
+        if prompt_mode:
+            entry["promptMode"] = prompt_mode
+        if system_prompt:
+            entry["systemPrompt"] = system_prompt
+        if tools_profile or tools_allow or tools_deny:
+            tools_entry: dict = {}
+            if tools_profile:
+                tools_entry["profile"] = tools_profile
+            if tools_allow:
+                tools_entry["alsoAllow"] = tools_allow
+            if tools_deny:
+                tools_entry["deny"] = tools_deny
+            entry["tools"] = tools_entry
         lst.append(entry)
 
     _load_and_save_config(mutate)

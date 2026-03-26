@@ -234,6 +234,7 @@ from operator_use.config import (
     AgentDefaults, AgentsConfig, ProvidersConfig, ProviderConfig,
     ChannelsConfig, TelegramConfig, DiscordConfig, SlackConfig,
     AgentDefinition, ACPServerSettings, ACPAgentEntry, HeartbeatConfig,
+    ToolsConfig,
 )
 
 
@@ -302,6 +303,14 @@ def _save_config(
             defn_kwargs["channels"] = agent_channels
         defn_kwargs["browser_use"] = bool(a.get("browser_use", True))
         defn_kwargs["computer_use"] = bool(a.get("computer_use", False))
+        defn_kwargs["prompt_mode"] = a.get("prompt_mode", "full")
+        if a.get("system_prompt"):
+            defn_kwargs["system_prompt"] = a["system_prompt"]
+        defn_kwargs["tools"] = ToolsConfig(
+            profile=a.get("tools_profile", "full"),
+            also_allow=a.get("tools_allow", []),
+            deny=a.get("tools_deny", []),
+        )
         agent_list.append(AgentDefinition(**defn_kwargs))
 
     hb_llm = LLMConfig(provider=heartbeat_llm_provider_key, model=heartbeat_llm_model) if heartbeat_llm_provider_key and heartbeat_llm_model else None
@@ -497,27 +506,37 @@ def run_initial_setup():
     # None values mean "use global default".
     agent_defs: list[dict] = []
     for a in existing_data.get("agents", {}).get("list", []):
-        _a_llm = a.get("llmConfig", a.get("llm_config")) or {}
-        _a_ch  = a.get("channels", {}) or {}
+        _a_llm   = a.get("llmConfig", a.get("llm_config")) or {}
+        _a_ch    = a.get("channels", {}) or {}
+        _a_tools = a.get("tools") or {}
         agent_defs.append({
             "id":               a.get("id", ""),
             "llm_provider_key": _a_llm.get("provider") or None,
             "llm_model":        _a_llm.get("model") or None,
             "channels":         {
-                "telegram": _a_ch.get("telegram", {}).get("token", "") or "",
-                "discord":  _a_ch.get("discord",  {}).get("token", "") or "",
+                "telegram":  _a_ch.get("telegram", {}).get("token", "") or "",
+                "discord":   _a_ch.get("discord",  {}).get("token", "") or "",
                 "slack_bot": _a_ch.get("slack", {}).get("botToken", "") or "",
                 "slack_app": _a_ch.get("slack", {}).get("appToken", "") or "",
             },
-            "browser_use": bool(a.get("browserUse", a.get("browser_use", True))),
-            "computer_use": bool(a.get("computerUse", a.get("computer_use", False))),
+            "browser_use":   bool(a.get("browserUse", a.get("browser_use", True))),
+            "computer_use":  bool(a.get("computerUse", a.get("computer_use", False))),
+            "prompt_mode":   a.get("promptMode", a.get("prompt_mode", "full")),
+            "system_prompt": a.get("systemPrompt", a.get("system_prompt", "")),
+            "tools_profile": _a_tools.get("profile", "full"),
+            "tools_allow":   _a_tools.get("alsoAllow", _a_tools.get("also_allow", [])),
+            "tools_deny":    _a_tools.get("deny", []),
         })
 
     # Ensure at least one agent entry exists (edge case: corrupted config)
     if not agent_defs:
-        agent_defs.append({"id": "operator", "llm_provider_key": None, "llm_model": None,
-                           "channels": {"telegram": "", "discord": "", "slack_bot": "", "slack_app": ""},
-                           "browser_use": True, "computer_use": False})
+        agent_defs.append({
+            "id": "operator", "llm_provider_key": None, "llm_model": None,
+            "channels": {"telegram": "", "discord": "", "slack_bot": "", "slack_app": ""},
+            "browser_use": True, "computer_use": False,
+            "prompt_mode": "full", "system_prompt": "",
+            "tools_profile": "full", "tools_allow": [], "tools_deny": [],
+        })
 
     def _need_key(prov_key: str, prov_name: str) -> bool:
         return prov_key not in api_keys_dict and prov_name not in OAUTH_PROVIDERS and prov_name not in NO_KEY_PROVIDERS
@@ -554,6 +573,16 @@ def run_initial_setup():
                 computer_use = a.get("computer_use", False)
                 bu_label = "enabled" if browser_use else "disabled"
                 cu_label = "enabled" if computer_use else "disabled"
+                pm_label = a.get("prompt_mode", "full")
+                sp_label = "set" if a.get("system_prompt") else "not set"
+                tools_profile = a.get("tools_profile", "full")
+                tools_allow = a.get("tools_allow", [])
+                tools_deny = a.get("tools_deny", [])
+                tools_label = tools_profile
+                if tools_allow:
+                    tools_label += f"  +{len(tools_allow)}"
+                if tools_deny:
+                    tools_label += f"  -{len(tools_deny)}"
 
                 choice = select(f"Configure agent: {a['id']}", [
                     f"Rename         {a['id']}",
@@ -561,6 +590,9 @@ def run_initial_setup():
                     f"Channels       {ch_label}",
                     f"Browser Use    {bu_label}",
                     f"Computer Use   {cu_label}",
+                    f"Prompt Mode    {pm_label}",
+                    f"System Prompt  {sp_label}",
+                    f"Tools          {tools_label}",
                     "Remove agent",
                     "← Back",
                 ])
@@ -646,6 +678,41 @@ def run_initial_setup():
                         agent_defs[idx]["browser_use"] = False
                     agent_defs[idx]["computer_use"] = new_val
 
+                elif choice.startswith("Prompt Mode"):
+                    mode = select("Prompt mode:", ["full", "minimal", "none"])
+                    agent_defs[idx]["prompt_mode"] = mode
+
+                elif choice.startswith("System Prompt"):
+                    current_sp = a.get("system_prompt", "")
+                    val = text_input("System prompt (leave blank to clear):", default=current_sp)
+                    agent_defs[idx]["system_prompt"] = val.strip()
+
+                elif choice.startswith("Tools"):
+                    while True:
+                        try:
+                            _render_configure_screen()
+                            tp = agent_defs[idx].get("tools_profile", "full")
+                            ta = ", ".join(agent_defs[idx].get("tools_allow", [])) or "none"
+                            td = ", ".join(agent_defs[idx].get("tools_deny", [])) or "none"
+                            tools_choice = select("Tools configuration:", [
+                                f"Profile    {tp}",
+                                f"Also Allow {ta}",
+                                f"Deny       {td}",
+                                "← Back",
+                            ])
+                            if tools_choice.startswith("←"):
+                                break
+                            elif tools_choice.startswith("Profile"):
+                                agent_defs[idx]["tools_profile"] = select("Tools profile:", ["full", "coding", "minimal"])
+                            elif tools_choice.startswith("Also Allow"):
+                                raw = text_input("Extra tools to allow (comma-separated):", default=", ".join(agent_defs[idx].get("tools_allow", [])))
+                                agent_defs[idx]["tools_allow"] = [t.strip() for t in raw.split(",") if t.strip()]
+                            elif tools_choice.startswith("Deny"):
+                                raw = text_input("Tools to deny (comma-separated):", default=", ".join(agent_defs[idx].get("tools_deny", [])))
+                                agent_defs[idx]["tools_deny"] = [t.strip() for t in raw.split(",") if t.strip()]
+                        except BackRequest:
+                            break
+
                 elif choice.startswith("Remove"):
                     if len(agent_defs) <= 1:
                         console.print("│")
@@ -690,6 +757,11 @@ def run_initial_setup():
                             "channels": {"telegram": "", "discord": "", "slack_bot": "", "slack_app": ""},
                             "browser_use": True,
                             "computer_use": False,
+                            "prompt_mode": "full",
+                            "system_prompt": "",
+                            "tools_profile": "full",
+                            "tools_allow": [],
+                            "tools_deny": [],
                         })
                         _agent_submenu(len(agent_defs) - 1)
 
