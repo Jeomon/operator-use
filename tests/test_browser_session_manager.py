@@ -1,8 +1,8 @@
-from operator_use.web.browser.session_manager import SessionManager
+from operator_use.web.browser.session import Session
 
 
 def test_register_target_sets_current_target_once():
-    manager = SessionManager()
+    manager = Session()
 
     manager.register_target("t1", "s1", "https://example.com", "Example")
     manager.register_target("t2", "s2", "https://openai.com", "OpenAI")
@@ -13,7 +13,7 @@ def test_register_target_sets_current_target_once():
 
 
 def test_update_target_changes_stored_metadata():
-    manager = SessionManager()
+    manager = Session()
     manager.register_target("t1", "s1", "https://example.com", "Example")
 
     manager.update_target("t1", url="https://example.org", title="Example Org")
@@ -23,7 +23,7 @@ def test_update_target_changes_stored_metadata():
 
 
 def test_remove_by_target_promotes_next_current_target():
-    manager = SessionManager()
+    manager = Session()
     manager.register_target("t1", "s1")
     manager.register_target("t2", "s2")
     manager.current_target_id = "t1"
@@ -36,7 +36,7 @@ def test_remove_by_target_promotes_next_current_target():
 
 
 def test_find_target_by_session_returns_matching_target():
-    manager = SessionManager()
+    manager = Session()
     manager.register_target("t1", "s1")
 
     assert manager.find_target_by_session("s1") == "t1"
