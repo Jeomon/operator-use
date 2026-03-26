@@ -11,7 +11,7 @@ class TargetSession:
     title: str = ""
 
 
-class SessionManager:
+class Session:
     """Owns page target/session bookkeeping for a Browser instance."""
 
     def __init__(self) -> None:

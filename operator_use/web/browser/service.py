@@ -1,7 +1,7 @@
 from operator_use.web.browser.config import BrowserConfig, BROWSER_ARGS
 from operator_use.web.browser.events import BrowserEvent, NavigationSettledEvent, NavigationStartedEvent, StateInvalidatedEvent
 from operator_use.web.browser.page import Page
-from operator_use.web.browser.session_manager import SessionManager
+from operator_use.web.browser.session import Session
 from operator_use.web.browser.views import BrowserState, Tab
 from operator_use.web.dom.views import DOMElementNode
 from collections import deque
@@ -69,7 +69,7 @@ class Browser:
         self._client: Client = None
 
         # Tab / session state
-        self._session_manager = SessionManager()
+        self._session_manager = Session()
         self._targets:    dict[str, dict]           = self._session_manager.targets
         self._sessions:   dict[str, str]            = self._session_manager.sessions
         self._lifecycle:    dict[str, deque]          = {}
