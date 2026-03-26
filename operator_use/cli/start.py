@@ -216,7 +216,7 @@ def _get_plugin_registry() -> dict[str, type]:
     return PLUGIN_REGISTRY
 
 
-def _build_agents(config: Config, cron, gateway, bus) -> dict[str, Agent]:
+def _build_agents(config: Config, cron, gateway, bus, image=None) -> dict[str, Agent]:
     """Instantiate one Agent per agent definition in config."""
     from operator_use.agent.tools.builtin import resolve_tools
 
@@ -269,6 +269,7 @@ def _build_agents(config: Config, cron, gateway, bus) -> dict[str, Agent]:
             subagent_config=defaults.subagent,
             acp_registry=config.acp_agents,
             plugins=plugins,
+            image=image,
         )
 
     for agent in agents.values():
@@ -484,7 +485,8 @@ async def main():
     cron_store = USERDATA_DIR / "crons.json"
     cron = Cron(store_path=cron_store, on_job=on_job)
 
-    agents = _build_agents(config, cron=cron, gateway=gateway, bus=bus)
+    image_provider = _make_image(config)
+    agents = _build_agents(config, cron=cron, gateway=gateway, bus=bus, image=image_provider)
 
     async def _graceful_restart() -> None:
         """Cancel all running asyncio tasks so main()'s finally block can run cleanly."""

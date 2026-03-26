@@ -66,6 +66,7 @@ class Agent:
         subagent_config=None,
         acp_registry: dict | None = None,
         plugins: "list[Plugin] | None" = None,
+        image=None,
     ):
         self.agent_id = agent_id
         self.description = description
@@ -109,6 +110,7 @@ class Agent:
         self.tool_register.set_extension("_process_store", self.process_store)
         self.tool_register.set_extension("_acp_registry", acp_registry or {})
         self.tool_register.set_extension("_llm", self.llm)
+        self.tool_register.set_extension("_image_provider", image)
         self.tool_register.set_extension("_agent", self)
         self.tool_register.set_extension("_agent_id", self.agent_id)
 
@@ -184,6 +186,9 @@ class Agent:
             self.tool_register.set_extension("_account_id", incoming.account_id)
             self.tool_register.set_extension("_metadata", incoming.metadata or {})
             self.tool_register.set_extension("_session_id", session_id)
+            from operator_use.bus.views import ImagePart as _ImagePart
+            _img_paths = [p for part in incoming.parts if isinstance(part, _ImagePart) for p in (part.paths or [])]
+            self.tool_register.set_extension("_incoming_image_paths", _img_paths or None)
         if pending_replies is not None:
             self.tool_register.set_extension("_pending_replies", pending_replies)
 
