@@ -106,6 +106,17 @@ class TTSConfig(Base):
     voice: Optional[str] = None
 
 
+class ImageConfig(Base):
+    """Image generation configuration."""
+
+    enabled: bool = False
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    size: Optional[str] = None
+    quality: Optional[str] = None
+    style: Optional[str] = None
+
+
 class PeerMatch(Base):
     """Match a specific chat/channel/group within a platform."""
 
@@ -251,6 +262,7 @@ class Config(BaseSettings):
     bindings: List[AgentRouteBinding] = Field(default_factory=list)
     stt: STTConfig = Field(default_factory=STTConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)
+    image: ImageConfig = Field(default_factory=ImageConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
     # Named registry of pre-approved remote ACP agents.

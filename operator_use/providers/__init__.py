@@ -12,7 +12,7 @@ Shared base protocols and data models:
 """
 
 # Base protocols & data models
-from operator_use.providers.base import BaseChatLLM, BaseSTT, BaseTTS
+from operator_use.providers.base import BaseChatLLM, BaseSTT, BaseTTS, BaseImage
 from operator_use.providers.views import TokenUsage, Metadata
 from operator_use.providers.events import Thinking, LLMEvent, LLMStreamEvent, ToolCall
 
@@ -73,6 +73,10 @@ except ImportError:
 # TTS providers
 from operator_use.providers.openai import TTSOpenAI
 from operator_use.providers.google import TTSGoogle
+
+# Image generation providers
+from operator_use.providers.openai import ImageOpenAI
+from operator_use.providers.google import ImageGoogle
 from operator_use.providers.groq import TTSGroq
 
 try:
@@ -98,6 +102,7 @@ __all__ = [
     "BaseChatLLM",
     "BaseSTT",
     "BaseTTS",
+    "BaseImage",
     "TokenUsage",
     "Metadata",
     "Thinking",
@@ -137,4 +142,7 @@ __all__ = [
     "TTSDeepgram",
     "TTSSarvam",
     "GOOGLE_TTS_VOICES",
+    # Image generation providers
+    "ImageOpenAI",
+    "ImageGoogle",
 ]

@@ -112,6 +112,11 @@ TTS_CLASS_MAP = {
     "sarvam": "TTSSarvam",
 }
 
+IMAGE_CLASS_MAP = {
+    "openai": "ImageOpenAI",
+    "google": "ImageGoogle",
+}
+
 
 def _make_llm(config: Config, llm_conf) -> Optional[BaseChatLLM]:
     import operator_use.providers as providers
@@ -156,6 +161,28 @@ def _make_tts(config: Config) -> Optional[BaseTTS]:
     if tts_conf.voice:
         tts_kwargs["voice"] = tts_conf.voice
     return tts_cls(**tts_kwargs)
+
+
+def _make_image(config: Config):
+    import operator_use.providers as providers
+    img_conf = config.image
+    if not img_conf.enabled or not img_conf.provider:
+        return None
+    img_cls_name = IMAGE_CLASS_MAP.get(img_conf.provider)
+    if not img_cls_name or not hasattr(providers, img_cls_name):
+        return None
+    img_cls = getattr(providers, img_cls_name)
+    p_conf = getattr(config.providers, img_conf.provider, None)
+    img_kwargs = {"api_key": p_conf.api_key if p_conf else None}
+    if img_conf.model:
+        img_kwargs["model"] = img_conf.model
+    if img_conf.size:
+        img_kwargs["size"] = img_conf.size
+    if img_conf.quality:
+        img_kwargs["quality"] = img_conf.quality
+    if img_conf.style:
+        img_kwargs["style"] = img_conf.style
+    return img_cls(**img_kwargs)
 
 
 def _make_models(config: Config) -> tuple[Optional[BaseChatLLM], Optional[BaseSTT], Optional[BaseTTS]]:
@@ -539,6 +566,9 @@ async def main():
         _row("STT", f"{stt_conf.provider} / {stt_conf.model}")
     if tts_conf.enabled and tts_conf.provider:
         _row("TTS", f"{tts_conf.provider} / {tts_conf.model}")
+    img_conf = config.image
+    if img_conf.enabled and img_conf.provider:
+        _row("Image", f"{img_conf.provider} / {img_conf.model}")
 
     restart_file = USERDATA_DIR / "restart.json"
 

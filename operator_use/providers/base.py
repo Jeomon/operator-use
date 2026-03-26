@@ -132,6 +132,54 @@ class BaseSTT(Protocol):
 
 
 @runtime_checkable
+class BaseImage(Protocol):
+    """Protocol for Image Generation providers.
+
+    Any image provider must implement `generate` and `agenerate` methods
+    that accept a prompt and an output file path, saving the generated image.
+
+    Example:
+        ```python
+        class MyImageProvider(BaseImage):
+            @property
+            def model(self) -> str:
+                return "my-model"
+
+            def generate(self, prompt: str, output_path: str, **kwargs) -> None:
+                ...
+
+            async def agenerate(self, prompt: str, output_path: str, **kwargs) -> None:
+                ...
+        ```
+    """
+
+    @property
+    def model(self) -> str:
+        """The name of the image generation model being used."""
+        ...
+
+    def generate(self, prompt: str, output_path: str, **kwargs) -> None:
+        """Generate an image from a text prompt and save it to a file.
+
+        Args:
+            prompt: The text description to generate an image from.
+            output_path: Path where the generated image file will be saved.
+            **kwargs: Provider-specific parameters (size, quality, style, etc.).
+        """
+        ...
+
+    async def agenerate(self, prompt: str, output_path: str, **kwargs) -> None:
+        """Asynchronously generate an image from a text prompt and save it to a file.
+
+        Args:
+            prompt: The text description to generate an image from.
+            output_path: Path where the generated image file will be saved.
+            **kwargs: Provider-specific parameters (size, quality, style, etc.).
+        """
+        ...
+
+
+@runtime_checkable
 class BaseTTS(Protocol):
     """Protocol for Text-to-Speech providers.
 
