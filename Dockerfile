@@ -14,7 +14,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy source code
 COPY operator_use/ ./operator_use/
-COPY main.py ./
+COPY main.py README.md ./
 
 # Install the project itself
 RUN uv sync --frozen --no-dev
