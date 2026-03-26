@@ -17,10 +17,11 @@ from operator_use.tools import Tool, ToolResult
 
 
 class Subagents(BaseModel):
-    action: Literal["create", "list", "cancel"] = Field(
+    action: Literal["create", "agents", "status", "cancel"] = Field(
         description=(
             "create — delegate a task to a new background subagent (returns task_id immediately). "
-            "list — show all subagents (running and finished) with their status and results. "
+            "agents — show all subagents (running and finished) with their status and results. "
+            "status — get detailed status and result of a specific subagent by task_id. "
             "cancel — stop a running subagent by task_id."
         )
     )
@@ -34,7 +35,7 @@ class Subagents(BaseModel):
     )
     task_id: Optional[str] = Field(
         default=None,
-        description="Subagent task_id to cancel (cancel action).",
+        description="Subagent task_id — required for status and cancel actions.",
     )
 
 
@@ -59,8 +60,9 @@ def _format_duration(started: datetime, finished: datetime | None) -> str:
         "Actions:\n"
         "  create — spawn a new background worker (returns task_id immediately). "
         "After calling create, END YOUR TURN — the result is delivered back automatically "
-        "when done. Do not poll with 'list'.\n"
-        "  list   — show all workers and their status (only when user explicitly asks).\n"
+        "when done. Do not poll with 'agents'.\n"
+        "  agents — show all workers and their status (only when user explicitly asks).\n"
+        "  status — get detailed status and full result of a specific subagent by task_id.\n"
         "  cancel — stop a running worker by task_id."
     ),
     model=Subagents,
@@ -95,7 +97,7 @@ async def subagents(
                 f"END YOUR TURN NOW. Do not call list or any other tool. Inform the user and stop."
             )
 
-        case "list":
+        case "agents":
             records = subagent_manager.list_all()
             if not records:
                 return ToolResult.success_result("No subagents have been created yet.")
@@ -123,6 +125,33 @@ async def subagents(
             running = sum(1 for r in records if r.status == "running")
             header = f"Subagents — {len(records)} total, {running} running\n" + "─" * 60
             return ToolResult.success_result(header + "\n" + "\n\n".join(lines))
+
+        case "status":
+            if not task_id:
+                return ToolResult.error_result("Provide task_id to check status")
+            record = subagent_manager.get_record(task_id)
+            if not record:
+                return ToolResult.error_result(f"No subagent found with task_id='{task_id}'")
+            duration = _format_duration(record.started_at, record.finished_at)
+            status_icon = {
+                "running":   "⏳",
+                "completed": "✅",
+                "failed":    "❌",
+                "cancelled": "🚫",
+            }.get(record.status, "?")
+            lines = [
+                f"{status_icon} task_id : {record.task_id}",
+                f"   status  : {record.status}",
+                f"   label   : {record.label}",
+                f"   duration: {duration}",
+                f"   started : {record.started_at.isoformat(timespec='seconds')}",
+            ]
+            if record.finished_at:
+                lines.append(f"   finished: {record.finished_at.isoformat(timespec='seconds')}")
+            lines.append(f"\nTask:\n{record.task}")
+            if record.result:
+                lines.append(f"\nResult:\n{record.result}")
+            return ToolResult.success_result("\n".join(lines))
 
         case "cancel":
             if not task_id:

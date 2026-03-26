@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
+from datetime import datetime
 from typing import Any, Optional, Literal
 
 from pydantic import BaseModel, Field
@@ -45,19 +47,36 @@ logger = logging.getLogger(__name__)
 
 
 class LocalAgents(BaseModel):
-    action: Literal["agents", "run"] = Field(
+    action: Literal["agents", "run", "spawn", "send", "sessions", "status", "cancel"] = Field(
         description=(
-            "agents — list all configured local agents available for delegation. "
-            "run — send a scoped task to another local agent and wait for its final answer."
+            "agents   — list all configured local agents available for delegation. "
+            "run      — send a scoped task to another local agent and wait for its final answer. "
+            "spawn    — start a persistent named session with an agent (returns session_id). "
+            "send     — send a follow-up message into an existing session (alias for run with session_id). "
+            "sessions — list all active named sessions tracked by this agent. "
+            "status   — get detailed status and result of a specific detached run by task_id. "
+            "cancel   — stop a running detached local agent by task_id."
         )
     )
     name: Optional[str] = Field(
         default=None,
-        description="Target local agent ID to delegate to (required for action='run').",
+        description="Target local agent ID to delegate to (required for run, spawn, send).",
     )
     task: Optional[str] = Field(
         default=None,
-        description="Delegated task for the target local agent (required for action='run').",
+        description="Delegated task or message for the target local agent (required for run/send, optional for spawn).",
+    )
+    session_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Session ID for multi-turn conversations. "
+            "Provide a custom ID with spawn to name the session, or reuse the returned ID in send/run "
+            "to continue the conversation with the agent's full prior context."
+        ),
+    )
+    label: Optional[str] = Field(
+        default=None,
+        description="Human-readable label for a spawned session (used with spawn).",
     )
     detached: bool = Field(
         default=False,
@@ -67,6 +86,10 @@ class LocalAgents(BaseModel):
             "END YOUR TURN after calling with detached=True — do not poll or wait. "
             "If False (default), block until the agent finishes and return its result directly."
         ),
+    )
+    task_id: Optional[str] = Field(
+        default=None,
+        description="Detached run task_id — required for status and cancel actions.",
     )
 
 
@@ -90,6 +113,28 @@ def _delegation_chain_from_metadata(metadata: dict[str, Any] | None) -> list[str
     return [agent_id for agent_id in chain if isinstance(agent_id, str) and agent_id]
 
 
+def _get_task_registry(agent) -> dict:
+    """Lazily initialise a per-agent registry for detached local-agent runs."""
+    if not hasattr(agent, "_local_agent_tasks"):
+        agent._local_agent_tasks = {}  # task_id -> {"record": dict, "asyncio_task": Task}
+    return agent._local_agent_tasks
+
+
+def _get_session_registry(agent) -> dict:
+    """Lazily initialise a per-agent registry for named persistent sessions."""
+    if not hasattr(agent, "_local_agent_sessions"):
+        agent._local_agent_sessions = {}  # session_id -> {"name": str, "label": str, "created_at": datetime}
+    return agent._local_agent_sessions
+
+
+def _format_duration(started: datetime, finished: datetime | None) -> str:
+    end = finished or datetime.now()
+    secs = int((end - started).total_seconds())
+    if secs < 60:
+        return f"{secs}s"
+    return f"{secs // 60}m {secs % 60}s"
+
+
 async def _run_detached(
     target,
     message: HumanMessage,
@@ -101,6 +146,7 @@ async def _run_detached(
     reply_channel: str,
     reply_chat_id: str,
     reply_account_id: str,
+    task_registry: dict,
 ) -> None:
     """Run a local agent in the background and announce the result via the bus."""
     logger.info(f"[{task_id}] detached local agent '{agent_name}' started")
@@ -116,11 +162,19 @@ async def _run_detached(
         status = "completed"
     except asyncio.CancelledError:
         logger.info(f"[{task_id}] detached local agent '{agent_name}' cancelled")
+        if task_id in task_registry:
+            task_registry[task_id]["record"]["status"] = "cancelled"
+            task_registry[task_id]["record"]["finished_at"] = datetime.now()
         return
     except Exception as e:
         logger.error(f"[{task_id}] detached local agent '{agent_name}' failed: {e}", exc_info=True)
         result = f"(error: {type(e).__name__}: {e})"
         status = "failed"
+
+    if task_id in task_registry:
+        task_registry[task_id]["record"]["status"] = status
+        task_registry[task_id]["record"]["finished_at"] = datetime.now()
+        task_registry[task_id]["record"]["result"] = result
 
     logger.info(f"[{task_id}] detached local agent '{agent_name}' done — status={status}")
 
@@ -148,10 +202,15 @@ async def _run_detached(
         "to hand off work to a specific named peer (e.g. a 'research' or 'coding' agent) "
         "rather than spinning up an anonymous background worker.\n\n"
         "Actions:\n"
-        "  agents — list all available local agents and their capabilities.\n"
-        "  run    — send a scoped task to a named peer and wait for its result.\n"
-        "           Set detached=True to run in the background; the result is delivered "
-        "back to this conversation automatically when done — end your turn immediately after.\n\n"
+        "  agents   — list all available local agents and their capabilities.\n"
+        "  run      — send a scoped task to a named peer and wait for its result.\n"
+        "             Set detached=True to run in the background; result is delivered automatically.\n"
+        "  spawn    — start a persistent named session with an agent; returns a session_id.\n"
+        "             Reuse that session_id in run/send to continue the multi-turn conversation.\n"
+        "  send     — send a follow-up message into an existing session (requires name + session_id).\n"
+        "  sessions — list all active named sessions tracked by this agent.\n"
+        "  status   — get detailed status and full result of a specific detached run by task_id.\n"
+        "  cancel   — stop a running detached local agent by task_id.\n\n"
         "Use the 'subagents' tool instead when you need anonymous parallel workers with no "
         "persistent state."
     ),
@@ -161,7 +220,10 @@ async def localagents(
     action: str,
     name: str | None = None,
     task: str | None = None,
+    session_id: str | None = None,
+    label: str | None = None,
     detached: bool = False,
+    task_id: str | None = None,
     **kwargs,
 ) -> ToolResult:
     registry: dict = kwargs.get("_agent_registry") or {}
@@ -185,14 +247,96 @@ async def localagents(
                 f"  • {agent_id}{marker} — {description} "
                 f"[capabilities: {_agent_capabilities(agent)}]"
             )
+
+        # Show any active detached runs from this agent
+        if current_agent is not None:
+            task_reg = _get_task_registry(current_agent)
+            if task_reg:
+                running = [e["record"] for e in task_reg.values() if e["record"]["status"] == "running"]
+                if running:
+                    lines.append(f"\nActive detached runs ({len(running)} running):")
+                    for r in running:
+                        dur = _format_duration(r["started_at"], None)
+                        lines.append(f"  ⏳ {r['task_id']}  [{r['name']}]  {dur}")
+
         return ToolResult.success_result("\n".join(lines))
 
-    if action != "run":
+    if action == "status":
+        if not task_id:
+            return ToolResult.error_result("Provide task_id to check status")
+        if current_agent is None:
+            return ToolResult.error_result("Agent context not available (internal error)")
+        task_reg = _get_task_registry(current_agent)
+        entry = task_reg.get(task_id)
+        if not entry:
+            return ToolResult.error_result(f"No detached run found with task_id='{task_id}'")
+        r = entry["record"]
+        dur = _format_duration(r["started_at"], r.get("finished_at"))
+        status_icon = {
+            "running":   "⏳",
+            "completed": "✅",
+            "failed":    "❌",
+            "cancelled": "🚫",
+        }.get(r["status"], "?")
+        lines = [
+            f"{status_icon} task_id : {r['task_id']}",
+            f"   agent   : {r['name']}",
+            f"   status  : {r['status']}",
+            f"   duration: {dur}",
+            f"   started : {r['started_at'].isoformat(timespec='seconds')}",
+        ]
+        if r.get("finished_at"):
+            lines.append(f"   finished: {r['finished_at'].isoformat(timespec='seconds')}")
+        lines.append(f"\nTask:\n{r['task']}")
+        if r.get("result"):
+            lines.append(f"\nResult:\n{r['result']}")
+        return ToolResult.success_result("\n".join(lines))
+
+    if action == "cancel":
+        if not task_id:
+            return ToolResult.error_result("Provide task_id to cancel")
+        if current_agent is None:
+            return ToolResult.error_result("Agent context not available (internal error)")
+        task_reg = _get_task_registry(current_agent)
+        entry = task_reg.get(task_id)
+        if not entry:
+            return ToolResult.error_result(f"No detached run found with task_id='{task_id}'")
+        r = entry["record"]
+        if r["status"] != "running":
+            return ToolResult.error_result(
+                f"Cannot cancel — agent '{r['name']}' run {task_id} is not running (status={r['status']})"
+            )
+        entry["asyncio_task"].cancel()
+        return ToolResult.success_result(f"Cancellation requested for agent '{r['name']}' (task_id={task_id}).")
+
+    if action == "sessions":
+        if current_agent is None:
+            return ToolResult.error_result("Agent context not available (internal error)")
+        session_reg = _get_session_registry(current_agent)
+        if not session_reg:
+            return ToolResult.success_result("No named sessions have been spawned yet.")
+        lines = ["Active named sessions:"]
+        for sid, info in session_reg.items():
+            age = _format_duration(info["created_at"], None)
+            lines.append(
+                f"  • {sid}  agent='{info['name']}'  label='{info['label']}'  age={age}"
+            )
+        return ToolResult.success_result("\n".join(lines))
+
+    if action in ("spawn", "send"):
+        if not name:
+            return ToolResult.error_result(f"name is required for action='{action}'")
+        if action == "send" and not task:
+            return ToolResult.error_result("task is required for action='send'")
+        if action == "send" and not session_id:
+            return ToolResult.error_result("session_id is required for action='send' — use spawn first to create a session")
+
+    if action != "run" and action not in ("spawn", "send"):
         return ToolResult.error_result(f"Unknown action '{action}'")
 
     if not name:
         return ToolResult.error_result("name is required for action='run'")
-    if not task:
+    if not task and action != "spawn":
         return ToolResult.error_result("task is required for action='run'")
 
     target = registry.get(name)
@@ -212,7 +356,22 @@ async def localagents(
             f"Refusing circular local delegation: {chain_text}. Choose a target outside the current delegation chain."
         )
 
-    delegated_session_id = f"{parent_session_id}__delegate__{current_agent_id or 'agent'}-to-{name}"
+    if session_id:
+        delegated_session_id = session_id
+    elif action == "spawn":
+        delegated_session_id = f"spawned_{name}_{uuid.uuid4().hex[:8]}"
+    else:
+        delegated_session_id = f"{parent_session_id}__delegate__{current_agent_id or 'agent'}-to-{name}"
+
+    # Register the session for spawn
+    if action == "spawn" and current_agent is not None:
+        session_reg = _get_session_registry(current_agent)
+        session_reg[delegated_session_id] = {
+            "name": name,
+            "label": label or delegated_session_id,
+            "created_at": datetime.now(),
+        }
+
     delegated_metadata = {
         **current_metadata,
         "_delegated_local_agent_call": True,
@@ -235,28 +394,47 @@ async def localagents(
         if bus is None:
             return ToolResult.error_result("Bus not available for detached mode (internal error).")
 
-        import uuid
-        task_id = f"local_{name}_{uuid.uuid4().hex[:8]}"
+        run_task_id = f"local_{name}_{uuid.uuid4().hex[:8]}"
 
-        asyncio.create_task(
+        task_reg = _get_task_registry(current_agent) if current_agent is not None else {}
+        record = {
+            "task_id": run_task_id,
+            "name": name,
+            "task": task,
+            "status": "running",
+            "started_at": datetime.now(),
+            "finished_at": None,
+            "result": None,
+        }
+
+        at = asyncio.create_task(
             _run_detached(
                 target=target,
                 message=message,
                 session_id=delegated_session_id,
                 incoming=incoming,
                 agent_name=name,
-                task_id=task_id,
+                task_id=run_task_id,
                 bus=bus,
                 reply_channel=parent_channel,
                 reply_chat_id=parent_chat_id,
                 reply_account_id=parent_account_id,
+                task_registry=task_reg,
             ),
-            name=f"localagent-{task_id}",
+            name=f"localagent-{run_task_id}",
         )
+        task_reg[run_task_id] = {"record": record, "asyncio_task": at}
+
         return ToolResult.success_result(
-            f"Agent '{name}' started in background (task_id={task_id}).\n"
+            f"Agent '{name}' started in background (task_id={run_task_id}).\n"
             f"Result will be delivered automatically when done.\n"
             f"END YOUR TURN. Inform the user and stop."
+        )
+
+    if action == "spawn" and not task:
+        return ToolResult.success_result(
+            f"Session '{delegated_session_id}' created for agent '{name}'.\n"
+            f"Use action='send' with session_id='{delegated_session_id}' to start the conversation."
         )
 
     response = await target.run(
@@ -266,4 +444,12 @@ async def localagents(
         publish_stream=None,
         pending_replies=None,
     )
+
+    if action == "spawn":
+        return ToolResult.success_result(
+            f"Session '{delegated_session_id}' created for agent '{name}'.\n\n"
+            f"{response.content or ''}\n\n"
+            f"Continue with action='send', name='{name}', session_id='{delegated_session_id}'."
+        )
+
     return ToolResult.success_result(str(response.content or ""))
