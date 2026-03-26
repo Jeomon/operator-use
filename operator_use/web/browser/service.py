@@ -1,4 +1,7 @@
 from operator_use.web.browser.config import BrowserConfig, BROWSER_ARGS
+from operator_use.web.browser.events import BrowserEvent, NavigationSettledEvent, NavigationStartedEvent, StateInvalidatedEvent
+from operator_use.web.browser.page import Page
+from operator_use.web.browser.session_manager import SessionManager
 from operator_use.web.browser.views import BrowserState, Tab
 from operator_use.web.dom.views import DOMElementNode
 from collections import deque
@@ -15,6 +18,7 @@ import base64
 import json
 import random
 import re
+import logging
 
 
 _SPECIAL_KEYS: dict[str, dict] = {
@@ -46,6 +50,9 @@ _MODIFIER_KEYS: dict[str, dict] = {
 }
 
 
+logger = logging.getLogger(__name__)
+
+
 def _parse_key_combo(keys_str: str):
     parts = [p.strip() for p in keys_str.split('+')]
     mods = [_MODIFIER_KEYS[p] for p in parts[:-1] if p in _MODIFIER_KEYS]
@@ -62,14 +69,20 @@ class Browser:
         self._client: Client = None
 
         # Tab / session state
-        self._targets:    dict[str, dict]           = {}
-        self._sessions:   dict[str, str]            = {}
+        self._session_manager = SessionManager()
+        self._targets:    dict[str, dict]           = self._session_manager.targets
+        self._sessions:   dict[str, str]            = self._session_manager.sessions
         self._lifecycle:    dict[str, deque]          = {}
+        self._page_started: dict[str, asyncio.Event]  = {}
         self._page_ready:   dict[str, asyncio.Event]  = {}
         self._page_loading: dict[str, bool]           = {}  # session_id -> True while navigation in progress
         self._current_target_id: str | None           = None
+        self._browser_event_handlers: dict[str, list[Callable[[BrowserEvent], Any]]] = {}
+        self._special_keys = _SPECIAL_KEYS
 
         self._browser_state: BrowserState = None
+        self._page = Page(self)
+        self._state_watchdog = None
         self.crashed: bool = False
 
         # Last known mouse position (for trajectory simulation)
@@ -80,12 +93,19 @@ class Browser:
         self._resolved_attach_ws_url: str | None = None
 
         # Watchdogs (attached during init_tabs)
-        from operator_use.web.watchdog import DialogWatchdog, CrashWatchdog, DownloadWatchdog
+        from operator_use.web.watchdog import DOMWatchdog, DialogWatchdog, CrashWatchdog, DownloadWatchdog, PopupWatchdog, StateWatchdog
         self._watchdogs = [
+            DOMWatchdog(self),
             DialogWatchdog(self),
             CrashWatchdog(self),
             DownloadWatchdog(self),
+            PopupWatchdog(self),
+            StateWatchdog(self),
         ]
+        self._state_watchdog = next(
+            (watchdog for watchdog in self._watchdogs if isinstance(watchdog, StateWatchdog)),
+            None,
+        )
 
     # ------------------------------------------------------------------
     # Context manager
@@ -106,9 +126,10 @@ class Browser:
     def _on_browser_disconnected(self):
         """Called when the CDP WebSocket connection drops (e.g. browser closed externally)."""
         self._client = None
-        self._targets.clear()
-        self._sessions.clear()
+        self._session_manager.clear()
         self._lifecycle.clear()
+        self._page_started.clear()
+        self._page_ready.clear()
         self._page_loading.clear()
         self._current_target_id = None
 
@@ -430,14 +451,13 @@ class Browser:
         except Exception:
             pass
         finally:
-            self._targets.clear()
-            self._sessions.clear()
+            self._session_manager.clear()
             self._lifecycle.clear()
             self._page_loading.clear()
             for ev in self._page_ready.values():
                 ev.set()
             self._page_ready.clear()
-            self._current_target_id = None
+            self._set_current_target_id(None)
 
         # Close CDP client
         try:
@@ -474,6 +494,26 @@ class Browser:
     def on(self, event: str, handler: Callable[[Any, Optional[str]], None]) -> None:
         self._client.on(event, handler)
 
+    def on_browser_event(self, event: str | type[BrowserEvent], handler: Callable[[BrowserEvent], Any]) -> None:
+        key = event if isinstance(event, str) else event.event_name()
+        self._browser_event_handlers.setdefault(key, []).append(handler)
+
+    def emit_browser_event(self, event: BrowserEvent | str, payload: Optional[dict] = None) -> None:
+        if isinstance(event, str):
+            key = event
+            event_obj = payload or {}
+        else:
+            key = event.event_name()
+            event_obj = event
+        for handler in self._browser_event_handlers.get(key, []):
+            try:
+                if asyncio.iscoroutinefunction(handler):
+                    asyncio.create_task(handler(event_obj))
+                else:
+                    handler(event_obj)
+            except Exception as e:
+                logger.debug('Browser event handler failed for %s: %s', event, e)
+
     # ------------------------------------------------------------------
     # Tab / session init
     # ------------------------------------------------------------------
@@ -500,29 +540,28 @@ class Browser:
         page_targets = result.get('targetInfos', [])
 
         if page_targets:
-            self._current_target_id = page_targets[0]['targetId']
+            self._set_current_target_id(page_targets[0]['targetId'])
             for info in page_targets:
                 tid = info['targetId']
                 attach = await self.send('Target.attachToTarget', {'targetId': tid, 'flatten': True})
                 sid = attach['sessionId']
-                self._targets[tid]   = {'url': info['url'], 'title': info.get('title', '')}
-                self._sessions[tid]  = sid
+                self._session_manager.register_target(tid, sid, info['url'], info.get('title', ''))
                 self._lifecycle[sid] = deque(maxlen=50)
                 await self._init_tab_domains(sid)
         else:
             r = await self.send('Target.createTarget', {'url': 'about:blank'})
-            self._current_target_id = r['targetId']
+            self._set_current_target_id(r['targetId'])
             attach = await self.send('Target.attachToTarget', {
                 'targetId': self._current_target_id, 'flatten': True,
             })
             sid = attach['sessionId']
-            self._targets[self._current_target_id]  = {'url': 'about:blank', 'title': ''}
-            self._sessions[self._current_target_id] = sid
+            self._session_manager.register_target(self._current_target_id, sid, 'about:blank', '')
             self._lifecycle[sid] = deque(maxlen=50)
             await self._init_tab_domains(sid)
 
     async def _init_tab_domains(self, session_id: str):
         await asyncio.gather(
+            self.send('DOM.enable',     {}, session_id=session_id),
             self.send('Page.enable',    {}, session_id=session_id),
             self.send('Runtime.enable', {}, session_id=session_id),
             self.send('Network.enable', {}, session_id=session_id),
@@ -574,31 +613,34 @@ class Browser:
             return
         if info.get('type', '') != 'page':
             return
-        self._targets[target_id]    = {'url': info.get('url', ''), 'title': info.get('title', '')}
-        self._sessions[target_id]   = session_id
+        self._session_manager.register_target(target_id, session_id, info.get('url', ''), info.get('title', ''))
         self._lifecycle[session_id] = deque(maxlen=50)
         await self._init_tab_domains(session_id)
 
     def _on_detached(self, event, _=None):
         session_id = event.get('sessionId')
-        target_id  = next((t for t, s in self._sessions.items() if s == session_id), None)
+        target_id  = self._session_manager.find_target_by_session(session_id)
         if target_id:
-            self._targets.pop(target_id, None)
-            self._sessions.pop(target_id, None)
+            self._session_manager.remove_by_target(target_id)
             self._lifecycle.pop(session_id, None)
+            started = self._page_started.pop(session_id, None)
+            if started:
+                started.set()
             self._page_loading.pop(session_id, None)
             ready = self._page_ready.pop(session_id, None)
             if ready:
                 ready.set()  # unblock any waiter on a closing tab
-            if self._current_target_id == target_id and self._sessions:
-                self._current_target_id = next(iter(self._sessions))
+            self._set_current_target_id(self._session_manager.current_target_id)
 
     def _on_target_info_changed(self, event, _=None):
         info = event.get('targetInfo', {})
         tid  = info.get('targetId')
         if tid in self._targets:
-            self._targets[tid]['url']   = info.get('url', '')
-            self._targets[tid]['title'] = info.get('title', '')
+            self._session_manager.update_target(
+                tid,
+                url=info.get('url', ''),
+                title=info.get('title', ''),
+            )
 
     def _on_lifecycle_event(self, event, session_id=None):
         if not session_id:
@@ -612,6 +654,9 @@ class Browser:
         # Track navigation lifecycle
         if name == 'commit':
             self._page_loading[session_id] = True
+            started = self._page_started.get(session_id)
+            if started:
+                started.set()
         elif name == 'networkIdle':
             self._page_loading[session_id] = False
 
@@ -620,13 +665,42 @@ class Browser:
             ready = self._page_ready.get(session_id)
             if ready:
                 ready.set()
+            self.emit_browser_event(NavigationSettledEvent(session_id=session_id, name=name))
 
     # ------------------------------------------------------------------
     # Session helpers
     # ------------------------------------------------------------------
 
     def _get_current_session_id(self) -> str | None:
-        return self._sessions.get(self._current_target_id)
+        return self._session_manager.current_session_id()
+
+    def _set_current_target_id(self, target_id: str | None) -> None:
+        self._current_target_id = target_id
+        self._session_manager.current_target_id = target_id
+
+    def current_page(self) -> Page:
+        return self._page
+
+    def _parse_key_combo_impl(self, keys_str: str):
+        return _parse_key_combo(keys_str)
+
+    def _begin_navigation_tracking(self, session_id: str | None) -> None:
+        if not session_id:
+            return
+        self._page_started[session_id] = asyncio.Event()
+        self._page_ready[session_id] = asyncio.Event()
+        self._page_loading[session_id] = True
+        self.emit_browser_event(NavigationStartedEvent(session_id=session_id))
+
+    def is_navigation_pending(self) -> bool:
+        sid = self._get_current_session_id()
+        if not sid:
+            return False
+        if self._page_loading.get(sid, False):
+            return True
+        started = self._page_started.get(sid)
+        ready = self._page_ready.get(sid)
+        return bool(started and started.is_set() and not (ready and ready.is_set()))
 
     # ------------------------------------------------------------------
     # Tabs
@@ -645,8 +719,7 @@ class Browser:
                 live  = result.get('result', {}).get('value', {})
                 url   = live.get('url',   info.get('url', ''))
                 title = live.get('title', info.get('title', ''))
-                self._targets[tid]['url']   = url
-                self._targets[tid]['title'] = title
+                self._session_manager.update_target(tid, url=url, title=title)
             except Exception:
                 url   = info.get('url', '')
                 title = info.get('title', '')
@@ -683,11 +756,10 @@ class Browser:
         tid    = r['targetId']
         attach = await self.send('Target.attachToTarget', {'targetId': tid, 'flatten': True})
         sid = attach['sessionId']
-        self._targets[tid]   = {'url': 'about:blank', 'title': ''}
-        self._sessions[tid]  = sid
+        self._session_manager.register_target(tid, sid, 'about:blank', '')
         self._lifecycle[sid] = deque(maxlen=50)
         await self._init_tab_domains(sid)
-        self._current_target_id = tid
+        self._set_current_target_id(tid)
         await self._activate_target(tid)
         return Tab(id=len(self._targets) - 1, url='about:blank', title='', target_id=tid, session_id=sid)
 
@@ -700,16 +772,16 @@ class Browser:
             await self.send('Target.closeTarget', {'targetId': tid}, session_id=sid)
         except Exception:
             pass
-        remaining = [t for t in self._sessions if t != tid]
+        remaining = self._session_manager.remaining_targets(tid)
         if remaining and self._current_target_id == tid:
-            self._current_target_id = remaining[-1]
+            self._set_current_target_id(remaining[-1])
             await self._activate_target(remaining[-1])
 
     async def switch_tab(self, tab_index: int):
         tabs = await self.get_all_tabs()
         if tab_index < 0 or tab_index >= len(tabs):
             raise IndexError(f'Tab index {tab_index} out of range ({len(tabs)} tabs)')
-        self._current_target_id = tabs[tab_index].target_id
+        self._set_current_target_id(tabs[tab_index].target_id)
         await self._activate_target(self._current_target_id)
 
     async def _activate_target(self, target_id: str):
@@ -728,17 +800,19 @@ class Browser:
         if sid:
             if sid in self._lifecycle:
                 self._lifecycle[sid].clear()
-            self._page_ready.pop(sid, None)
+            self._begin_navigation_tracking(sid)
         await self.send('Page.navigate', {
             'url': url, 'transitionType': 'address_bar',
         }, session_id=sid)
         await self._wait_for_page(timeout=15.0)
 
     async def go_back(self):
+        self._begin_navigation_tracking(self._get_current_session_id())
         await self.execute_script('history.back()')
         await self._wait_for_page(timeout=10.0)
 
     async def go_forward(self):
+        self._begin_navigation_tracking(self._get_current_session_id())
         await self.execute_script('history.forward()')
         await self._wait_for_page(timeout=10.0)
 
@@ -746,21 +820,42 @@ class Browser:
         sid = self._get_current_session_id()
         if not sid:
             return
+        started = self._page_started.get(sid)
+        ready = self._page_ready.get(sid)
+        tracking_possible_navigation = False
 
-        # Only wait if a navigation is currently in progress
         if not self._page_loading.get(sid, False):
-            return
+            # Actions like clicks can trigger navigation asynchronously.
+            if started is None or started.is_set():
+                started = asyncio.Event()
+                self._page_started[sid] = started
+            if ready is None or ready.is_set():
+                ready = asyncio.Event()
+                self._page_ready[sid] = ready
+            tracking_possible_navigation = True
+            try:
+                await asyncio.wait_for(started.wait(), timeout=min(timeout, 0.75))
+            except asyncio.TimeoutError:
+                if self._page_started.get(sid) is started:
+                    self._page_started.pop(sid, None)
+                if self._page_ready.get(sid) is ready:
+                    self._page_ready.pop(sid, None)
+                await asyncio.sleep(0.1)
+                return
 
-        # Arm an asyncio.Event that _on_lifecycle_event will set on networkIdle/load
-        ready = asyncio.Event()
-        self._page_ready[sid] = ready
+        if ready is None or ready.is_set():
+            ready = asyncio.Event()
+            self._page_ready[sid] = ready
 
         try:
             await asyncio.wait_for(ready.wait(), timeout=timeout)
         except asyncio.TimeoutError:
             pass
         finally:
-            self._page_ready.pop(sid, None)
+            if self._page_ready.get(sid) is ready:
+                self._page_ready.pop(sid, None)
+            if tracking_possible_navigation and self._page_started.get(sid) is started:
+                self._page_started.pop(sid, None)
             self._page_loading.pop(sid, None)
 
         await asyncio.sleep(0.3)  # brief render buffer
@@ -808,21 +903,7 @@ class Browser:
         return code
 
     async def execute_script(self, script: str, truncate: bool = False, repair: bool = False) -> Any:
-        sid = self._get_current_session_id()
-        if repair:
-            script = self._repair_js(script)
-        try:
-            result = await self.send('Runtime.evaluate', {
-                'expression': script, 'returnByValue': True, 'awaitPromise': True,
-            }, session_id=sid)
-            if result and 'result' in result:
-                value = result['result'].get('value')
-                if truncate and isinstance(value, str) and len(value) > 20_000:
-                    value = value[:20_000] + f'\n... [truncated, total length: {len(value)}]'
-                return value
-        except Exception as e:
-            print(f'execute_script error: {e}')
-        return None
+        return await self.current_page().execute_script(script, truncate=truncate, repair=repair)
 
     # ------------------------------------------------------------------
     # Input
@@ -847,18 +928,7 @@ class Browser:
         self._mouse_x, self._mouse_y = x, y
 
     async def click_at(self, x: int, y: int):
-        sid = self._get_current_session_id()
-        # Small random jitter so clicks never land on the exact pixel center
-        jx = x + random.randint(-3, 3)
-        jy = y + random.randint(-3, 3)
-        await self._move_mouse(jx, jy)
-        await self.send('Input.dispatchMouseEvent', {
-            'type': 'mousePressed', 'x': jx, 'y': jy, 'button': 'left', 'clickCount': 1,
-        }, session_id=sid)
-        await asyncio.sleep(random.uniform(0.05, 0.15))  # realistic hold duration
-        await self.send('Input.dispatchMouseEvent', {
-            'type': 'mouseReleased', 'x': jx, 'y': jy, 'button': 'left', 'clickCount': 1,
-        }, session_id=sid)
+        await self.current_page().click_at(x, y)
 
     async def scroll_into_view(self, xpath: str):
         escaped = xpath.replace('"', '\\"')
@@ -870,68 +940,13 @@ class Browser:
         )
 
     async def type_text(self, text: str, delay_ms: int = 50):
-        sid = self._get_current_session_id()
-        for char in text:
-            await self.send('Input.dispatchKeyEvent', {
-                'type': 'char', 'text': char,
-            }, session_id=sid)
-            # Variable inter-keystroke delay to mimic human typing rhythm
-            if char == ' ':
-                delay = random.uniform(0.04, 0.08)
-            elif char in '.,!?;:\n':
-                delay = random.uniform(0.05, 0.12)
-            else:
-                delay = random.uniform(0.02, 0.05)
-            await asyncio.sleep(delay)
+        await self.current_page().type_text(text, delay_ms=delay_ms)
 
     async def key_press(self, keys: str):
-        sid = self._get_current_session_id()
-        mods, key_name = _parse_key_combo(keys)
-        combined = sum(m['bit'] for m in mods)
-
-        key_def = _SPECIAL_KEYS.get(key_name)
-        if key_def is None:
-            if len(key_name) == 1:
-                key_def = {'key': key_name, 'code': f'Key{key_name.upper()}', 'keyCode': ord(key_name.upper())}
-            else:
-                key_def = {'key': key_name, 'code': key_name, 'keyCode': 0}
-
-        for mod in mods:
-            await self.send('Input.dispatchKeyEvent', {
-                'type': 'rawKeyDown', 'key': mod['key'], 'code': mod['code'],
-                'windowsVirtualKeyCode': mod['keyCode'], 'modifiers': combined,
-            }, session_id=sid)
-
-        await self.send('Input.dispatchKeyEvent', {
-            'type': 'rawKeyDown', 'key': key_def['key'], 'code': key_def['code'],
-            'windowsVirtualKeyCode': key_def.get('keyCode', 0), 'modifiers': combined,
-        }, session_id=sid)
-        await self.send('Input.dispatchKeyEvent', {
-            'type': 'keyUp', 'key': key_def['key'], 'code': key_def['code'],
-            'windowsVirtualKeyCode': key_def.get('keyCode', 0), 'modifiers': combined,
-        }, session_id=sid)
-
-        for mod in reversed(mods):
-            await self.send('Input.dispatchKeyEvent', {
-                'type': 'keyUp', 'key': mod['key'], 'code': mod['code'],
-                'windowsVirtualKeyCode': mod['keyCode'], 'modifiers': 0,
-            }, session_id=sid)
+        await self.current_page().key_press(keys)
 
     async def scroll_page(self, direction: str, amount: int = 500):
-        sid = self._get_current_session_id()
-        viewport = await self.get_viewport()
-        cx = viewport[0] // 2
-        cy = viewport[1] // 2
-        delta = -amount if direction == 'up' else amount
-        # Break scroll into several steps with slight variation — feels human
-        steps = random.randint(3, 6)
-        step_delta = delta / steps
-        for _ in range(steps):
-            await self.send('Input.dispatchMouseEvent', {
-                'type': 'mouseWheel', 'x': cx, 'y': cy, 'deltaX': 0,
-                'deltaY': step_delta + random.uniform(-10, 10),
-            }, session_id=sid)
-            await asyncio.sleep(random.uniform(0.04, 0.10))
+        await self.current_page().scroll_page(direction, amount=amount)
 
     async def scroll_element(self, xpath: str, direction: str, amount: int = 500):
         escaped = xpath.replace('"', '\\"')
@@ -944,87 +959,33 @@ class Browser:
         )
 
     async def get_scroll_position(self) -> dict:
-        result = await self.execute_script(
-            '({scrollY: window.scrollY, scrollHeight: document.documentElement.scrollHeight, innerHeight: window.innerHeight})'
-        )
-        return result or {'scrollY': 0, 'scrollHeight': 0, 'innerHeight': 0}
+        return await self.current_page().get_scroll_position()
 
     # ------------------------------------------------------------------
     # Screenshot / page info
     # ------------------------------------------------------------------
 
     async def get_screenshot(self, full_page: bool = False, save_screenshot: bool = False) -> bytes | None:
-        sid = self._get_current_session_id()
-        await asyncio.sleep(0.3)
-        try:
-            result = await self.send('Page.captureScreenshot', {
-                'format': 'jpeg', 'quality': 80, 'captureBeyondViewport': full_page,
-            }, session_id=sid)
-            data = base64.b64decode(result['data'])
-        except Exception as e:
-            print(f'Screenshot failed: {e}')
-            return None
-
-        if save_screenshot:
-            from datetime import datetime
-            folder_path = Path('./screenshots')
-            folder_path.mkdir(parents=True, exist_ok=True)
-            path = folder_path / f'screenshot_{datetime.now().strftime("%Y_%m_%d_%H_%M_%S")}.jpeg'
-            with open(path, 'wb') as f:
-                f.write(data)
-        return data
+        return await self.current_page().get_screenshot(full_page=full_page, save_screenshot=save_screenshot)
 
     async def get_page_content(self) -> str:
-        return await self.execute_script('document.documentElement.outerHTML') or ''
+        return await self.current_page().get_page_content()
 
     async def get_viewport(self) -> tuple[int, int]:
-        result = await self.execute_script('({width: window.innerWidth, height: window.innerHeight})')
-        if isinstance(result, dict):
-            return result.get('width', 1280), result.get('height', 720)
-        return 1280, 720
+        return await self.current_page().get_viewport()
 
     # ------------------------------------------------------------------
     # Element actions
     # ------------------------------------------------------------------
 
     async def scroll_at(self, x: int, y: int, direction: str, amount: int = 500):
-        sid = self._get_current_session_id()
-        delta = -amount if direction == 'up' else amount
-        steps = random.randint(3, 6)
-        step_delta = delta / steps
-        for _ in range(steps):
-            await self.send('Input.dispatchMouseEvent', {
-                'type': 'mouseWheel', 'x': x, 'y': y, 'deltaX': 0,
-                'deltaY': step_delta + random.uniform(-10, 10),
-            }, session_id=sid)
-            await asyncio.sleep(random.uniform(0.04, 0.10))
+        await self.current_page().scroll_at(x, y, direction, amount=amount)
 
     async def set_file_input_at(self, x: int, y: int, files: list[str]):
-        sid = self._get_current_session_id()
-        await self.send('DOM.enable', {}, session_id=sid)
-        result = await self.send('DOM.getNodeForLocation', {'x': x, 'y': y}, session_id=sid)
-        backend_node_id = result.get('backendNodeId')
-        if not backend_node_id:
-            raise Exception(f'No element found at ({x}, {y})')
-        await self.send('DOM.setFileInputFiles', {
-            'files': files, 'backendNodeId': backend_node_id,
-        }, session_id=sid)
+        await self.current_page().set_file_input_at(x, y, files)
 
     async def select_option_at(self, x: int, y: int, labels: list[str]):
-        labels_json = json.dumps(labels)
-        await self.execute_script(
-            f'(function(){{'
-            f'  var el = document.elementFromPoint({x}, {y});'
-            f'  while (el && el.tagName !== "SELECT") el = el.parentElement;'
-            f'  if (!el) return false;'
-            f'  var labels = {labels_json};'
-            f'  for (var i = 0; i < el.options.length; i++) {{'
-            f'    if (labels.includes(el.options[i].text.trim())) el.options[i].selected = true;'
-            f'  }}'
-            f'  el.dispatchEvent(new Event("change", {{bubbles: true}}));'
-            f'  return true;'
-            f'}})()'
-        )
+        await self.current_page().select_option_at(x, y, labels)
 
     async def set_file_input(self, xpath: str, files: list[str]):
         sid = self._get_current_session_id()
@@ -1063,10 +1024,17 @@ class Browser:
     # ------------------------------------------------------------------
 
     async def get_state(self, use_vision: bool = False) -> BrowserState:
+        if self._state_watchdog is not None:
+            state = await self._state_watchdog.get_state(use_vision=use_vision)
+            if state is not None:
+                return state
+            if self._browser_state is not None:
+                return self._browser_state
+
         from operator_use.web.dom import DOM
         dom = DOM(session=self)
         screenshot, dom_state = await dom.get_state(use_vision=use_vision)
-        tabs        = await self.get_all_tabs()
+        tabs = await self.get_all_tabs()
         current_tab = await self.get_current_tab()
         self._browser_state = BrowserState(
             current_tab=current_tab,

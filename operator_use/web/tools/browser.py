@@ -150,6 +150,7 @@ async def browser(
     if browser._client is None:
         await browser.init_browser()
         await browser.init_tabs()
+    page = browser.current_page()
 
     match action:
         case "goto":
@@ -169,7 +170,7 @@ async def browser(
         case "click":
             if x is None or y is None:
                 return ToolResult.error_result("x and y are required for click.")
-            await browser.click_at(x, y)
+            await page.click_at(x, y)
             await browser._wait_for_page(timeout=8.0)
             return ToolResult.success_result(f"Clicked at ({x}, {y}).")
 
@@ -178,13 +179,13 @@ async def browser(
                 return ToolResult.error_result("x and y are required for type.")
             if text is None:
                 return ToolResult.error_result("text is required for type.")
-            await browser.click_at(x, y)
+            await page.click_at(x, y)
             if clear:
-                await browser.key_press("Control+a")
-                await browser.key_press("Backspace")
-            await browser.type_text(text, delay_ms=50)
+                await page.key_press("Control+a")
+                await page.key_press("Backspace")
+            await page.type_text(text, delay_ms=50)
             if press_enter:
-                await browser.key_press("Enter")
+                await page.key_press("Enter")
                 await browser._wait_for_page(timeout=8.0)
             return ToolResult.success_result(f"Typed at ({x}, {y}).")
 
@@ -192,21 +193,21 @@ async def browser(
             if not text:
                 return ToolResult.error_result("text is required for key (the key or combination to press, e.g. 'Enter', 'Control+A').")
             for _ in range(times):
-                await browser.key_press(text)
+                await page.key_press(text)
             return ToolResult.success_result(f"Pressed {text}.")
 
         case "scroll":
             if x is not None and y is not None:
-                await browser.scroll_at(x, y, direction, amount)
+                await page.scroll_at(x, y, direction, amount)
                 return ToolResult.success_result(f"Scrolled {direction} at ({x}, {y}) by {amount}px.")
-            pos = await browser.get_scroll_position()
+            pos = await page.get_scroll_position()
             scroll_y = pos.get("scrollY", 0)
             max_scroll = pos.get("scrollHeight", 0) - pos.get("innerHeight", 0)
             if direction == "down" and scroll_y >= max_scroll:
                 return ToolResult.success_result("Already at the bottom, cannot scroll further.")
             if direction == "up" and scroll_y <= 0:
                 return ToolResult.success_result("Already at the top, cannot scroll further.")
-            await browser.scroll_page(direction, amount)
+            await page.scroll_page(direction, amount)
             return ToolResult.success_result(f"Scrolled {direction} by {amount}px.")
 
         case "tab":
@@ -242,7 +243,7 @@ async def browser(
             if not filenames:
                 return ToolResult.error_result("filenames is required for upload.")
             files = [str(Path(getcwd()) / "uploads" / fn) for fn in filenames]
-            await browser.set_file_input_at(x, y, files)
+            await page.set_file_input_at(x, y, files)
             return ToolResult.success_result(f"Uploaded {filenames} to element at ({x}, {y}).")
 
         case "menu":
@@ -250,17 +251,17 @@ async def browser(
                 return ToolResult.error_result("x and y are required for menu.")
             if not labels:
                 return ToolResult.error_result("labels is required for menu.")
-            await browser.select_option_at(x, y, labels)
+            await page.select_option_at(x, y, labels)
             return ToolResult.success_result(f"Selected {', '.join(labels)} in dropdown at ({x}, {y}).")
 
         case "script":
             if not script:
                 return ToolResult.error_result("script is required for script.")
-            result = await browser.execute_script(script, truncate=True, repair=True)
+            result = await page.execute_script(script, truncate=True, repair=True)
             return ToolResult.success_result(f"Script result: {result}")
 
         case "scrape":
-            html = await browser.get_page_content()
+            html = await page.get_page_content()
             content = markdownify(html)
             return ToolResult.success_result(f"Page content:\n{content}")
 

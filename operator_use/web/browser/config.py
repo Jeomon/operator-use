@@ -83,6 +83,9 @@ class BrowserConfig:
     attach_to_existing: bool = False
     timeout: int = 60 * 1000
     slow_mo: int = 300
+    minimum_wait_page_load_time: float = 0.3
+    wait_for_network_idle_page_load_time: float = 0.5
+    maximum_wait_page_load_time: float = 10.0
 
     def resolved_browser(self) -> Literal['chrome', 'edge']:
         """Return the configured browser, auto-detecting if not explicitly set."""

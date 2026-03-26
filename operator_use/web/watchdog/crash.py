@@ -21,10 +21,7 @@ class CrashWatchdog(BaseWatchdog):
             return
 
         # Find which target this session belongs to
-        target_id = next(
-            (tid for tid, sid in self.session._sessions.items() if sid == session_id),
-            None,
-        )
+        target_id = self.session._session_manager.find_target_by_session(session_id)
 
         # Always clean up session state to unblock any waiters and avoid leaks.
         # This handles both tracked tabs and untracked sub-frames / service workers.
@@ -37,14 +34,10 @@ class CrashWatchdog(BaseWatchdog):
         if target_id:
             # Tracked tab crashed — clean up target/session maps
             logger.warning('Tab crashed (target=%s, session=%s)', target_id, session_id)
-            self.session._targets.pop(target_id, None)
-            self.session._sessions.pop(target_id, None)
+            self.session._session_manager.remove_by_target(target_id)
 
             # Switch current target to another tab if possible
-            if self.session._current_target_id == target_id:
-                self.session._current_target_id = (
-                    next(iter(self.session._sessions), None)
-                )
+            self.session._set_current_target_id(self.session._session_manager.current_target_id)
 
             # If no tabs remain, mark session as crashed so the agent can abort
             if not self.session._sessions:

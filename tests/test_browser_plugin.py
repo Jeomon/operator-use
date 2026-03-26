@@ -199,3 +199,19 @@ async def test_state_hook_appends_state_message():
 
     assert len(ctx.messages) == 1
     assert "https://example.com" in ctx.messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_state_hook_skips_when_state_unavailable():
+    plugin = BrowserPlugin(enabled=False)
+    plugin.browser = MagicMock()
+    plugin.browser._client = MagicMock()
+    plugin.browser._get_current_session_id = MagicMock(return_value="session-1")
+    plugin.browser.get_state = AsyncMock(return_value=None)
+
+    ctx = MagicMock()
+    ctx.messages = []
+    await plugin._state_hook(ctx)
+
+    plugin.browser.get_state.assert_awaited_once()
+    assert ctx.messages == []

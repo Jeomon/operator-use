@@ -3,8 +3,10 @@
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+import logging
 
 from operator_use.web.browser.config import BrowserConfig, BROWSER_ARGS, detect_installed_browser
+from operator_use.web.browser.events import StateInvalidatedEvent
 from operator_use.web.browser.service import Browser
 
 
@@ -29,6 +31,12 @@ def test_attach_to_existing_default_false():
 def test_attach_to_existing_can_be_enabled():
     cfg = BrowserConfig(attach_to_existing=True)
     assert cfg.attach_to_existing is True
+
+def test_page_load_timing_defaults_present():
+    cfg = BrowserConfig()
+    assert cfg.minimum_wait_page_load_time > 0
+    assert cfg.wait_for_network_idle_page_load_time > 0
+    assert cfg.maximum_wait_page_load_time >= cfg.wait_for_network_idle_page_load_time
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +226,86 @@ def test_resolved_browser_explicit():
     assert BrowserConfig(browser='chrome').resolved_browser() == 'chrome'
     assert BrowserConfig(browser='edge').resolved_browser() == 'edge'
 
+
+def test_begin_navigation_tracking_marks_session_loading():
+    browser = Browser(BrowserConfig())
+
+    browser._begin_navigation_tracking('session-1')
+
+    assert browser._page_loading['session-1'] is True
+    assert 'session-1' in browser._page_started
+    assert 'session-1' in browser._page_ready
+
+
+def test_emit_browser_event_calls_registered_handler():
+    browser = Browser(BrowserConfig())
+    handler = MagicMock()
+    browser.on_browser_event(StateInvalidatedEvent, handler)
+
+    browser.emit_browser_event(StateInvalidatedEvent(session_id='session-1', reason='click'))
+
+    event = handler.call_args.args[0]
+    assert isinstance(event, StateInvalidatedEvent)
+    assert event.reason == 'click'
+
+
+def test_is_navigation_pending_when_loading():
+    browser = Browser(BrowserConfig())
+    browser._get_current_session_id = MagicMock(return_value='session-1')
+    browser._page_loading['session-1'] = True
+
+    assert browser.is_navigation_pending() is True
+
+
+@pytest.mark.asyncio
+async def test_wait_for_page_returns_when_navigation_never_starts():
+    browser = Browser(BrowserConfig())
+    browser._get_current_session_id = MagicMock(return_value='session-1')
+
+    await browser._wait_for_page(timeout=0.1)
+
+    assert 'session-1' not in browser._page_started
+    assert 'session-1' not in browser._page_ready
+
+
+@pytest.mark.asyncio
+async def test_execute_script_logs_promise_collected(caplog):
+    browser = Browser(BrowserConfig())
+    browser._get_current_session_id = MagicMock(return_value='session-1')
+    browser.send = AsyncMock(side_effect=Exception("{'code': -32000, 'message': 'Promise was collected'}"))
+
+    with caplog.at_level(logging.WARNING):
+        result = await browser.execute_script('Promise.resolve(1)')
+
+    assert result is None
+    assert 'Promise was collected' in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_execute_script_logs_other_errors(caplog):
+    browser = Browser(BrowserConfig())
+    browser._get_current_session_id = MagicMock(return_value='session-1')
+    browser.send = AsyncMock(side_effect=Exception('boom'))
+
+    with caplog.at_level(logging.WARNING):
+        result = await browser.execute_script('1 + 1')
+
+    assert result is None
+    assert 'execute_script error: boom' in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_get_state_delegates_to_state_watchdog():
+    browser = Browser(BrowserConfig())
+    mock_state = MagicMock()
+    browser._state_watchdog = MagicMock()
+    browser._state_watchdog.get_state = AsyncMock(return_value=mock_state)
+
+    result = await browser.get_state()
+
+    assert result is mock_state
+    browser._state_watchdog.get_state.assert_awaited_once_with(use_vision=False)
+
 def test_resolved_browser_auto_detect_caches():
     cfg = BrowserConfig(browser=None)
     with patch('operator_use.web.browser.config.detect_installed_browser', return_value='chrome') as mock_detect:
@@ -255,4 +343,3 @@ async def test_close_kills_owned_browser():
     browser._client.__aexit__ = AsyncMock()
     await browser.close()
     mock_proc.terminate.assert_called_once()
-
