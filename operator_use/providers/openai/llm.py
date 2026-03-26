@@ -22,8 +22,35 @@ class ChatOpenAI(BaseChatLLM):
     - Structured outputs (via response_format)
     - Streaming
     - Vision (image inputs)
-    - Reasoning models (o1-preview, o1-mini)
+    - Reasoning models (o1, o3, o4 series)
     """
+
+    # Available models with context windows (tokens)
+    # Source: https://platform.openai.com/docs/models
+    MODELS = {
+        # GPT-5.4 series
+        "gpt-5.4": 1050000,          # GPT-5.4 flagship
+        "gpt-5.4-mini": 400000,      # GPT-5.4 Mini
+        "gpt-5.4-nano": 400000,      # GPT-5.4 Nano
+        # GPT-5.2 series
+        "gpt-5.2": 400000,           # GPT-5.2
+        # GPT-4.1 series
+        "gpt-4.1": 1000000,          # GPT-4.1
+        "gpt-4.1-mini": 1000000,     # GPT-4.1 Mini
+        "gpt-4.1-nano": 1000000,     # GPT-4.1 Nano
+        # GPT-4o series
+        "gpt-4o": 128000,            # GPT-4o
+        "gpt-4o-mini": 128000,       # GPT-4o Mini
+        # o-series (reasoning)
+        "o1": 200000,                # o1
+        "o3": 200000,                # o3
+        "o3-mini": 200000,           # o3 Mini
+        "o3-pro": 200000,            # o3 Pro
+        "o4-mini": 200000,           # o4 Mini
+    }
+
+    # Models that support chain-of-thought reasoning
+    REASONING_PATTERNS = ("o1", "o3", "o4")
 
     def __init__(
         self,
@@ -76,7 +103,7 @@ class ChatOpenAI(BaseChatLLM):
 
     def _is_reasoning_model(self) -> bool:
         """Check if the model is a reasoning model (o-series: o1, o3, o4, etc.)."""
-        return self._model.startswith(("o1", "o3", "o4"))
+        return self._model.startswith(self.REASONING_PATTERNS)
 
     def _convert_messages(self, messages: List[BaseMessage]) -> List[dict]:
         """
@@ -515,26 +542,7 @@ class ChatOpenAI(BaseChatLLM):
             yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
 
     def get_metadata(self) -> Metadata:
-        # Determine context window based on model
-        context_window = 128000  # Default
-
-        if self._model.startswith("gpt-5.4"):
-            context_window = 1050000 if self._model == "gpt-5.4" else 400000
-        elif self._model.startswith("gpt-5.2"):
-            context_window = 400000
-        elif self._model.startswith("gpt-4.1"):
-            context_window = 1000000
-        elif self._model.startswith("gpt-4-turbo"):
-            context_window = 128000
-        elif self._model.startswith("gpt-4o"):
-            context_window = 128000
-        elif self._model.startswith("gpt-4"):
-            context_window = 8192
-        elif self._model.startswith("gpt-3.5-turbo"):
-            context_window = 16385
-        elif self._model.startswith(("o1", "o3", "o4")):
-            context_window = 200000
-
+        context_window = self.MODELS.get(self._model, 128000)
         return Metadata(
             name=self._model,
             context_window=context_window,

@@ -17,6 +17,31 @@ class ChatAnthropic(BaseChatLLM):
     Anthropic LLM implementation following the BaseChatLLM protocol.
     """
 
+    # Available models with context windows (tokens)
+    # Source: https://docs.anthropic.com/en/docs/about-claude/models/all-models
+    MODELS = {
+        # Claude 4.6 (latest)
+        "claude-opus-4-6": 1000000,             # Claude Opus 4.6
+        "claude-sonnet-4-6": 1000000,           # Claude Sonnet 4.6
+        "claude-haiku-4-5-20251001": 200000,    # Claude Haiku 4.5
+        "claude-haiku-4-5": 200000,             # Claude Haiku 4.5 (alias)
+        # Claude 4.5 (legacy)
+        "claude-sonnet-4-5-20250929": 1000000,  # Claude Sonnet 4.5
+        "claude-sonnet-4-5": 1000000,           # Claude Sonnet 4.5 (alias)
+        "claude-opus-4-5-20251101": 200000,     # Claude Opus 4.5
+        "claude-opus-4-5": 200000,              # Claude Opus 4.5 (alias)
+        # Claude 4.1 (legacy)
+        "claude-opus-4-1-20250805": 200000,     # Claude Opus 4.1
+        "claude-opus-4-1": 200000,              # Claude Opus 4.1 (alias)
+        # Claude 4.0 (legacy)
+        "claude-sonnet-4-20250514": 1000000,    # Claude Sonnet 4
+        "claude-sonnet-4-0": 1000000,           # Claude Sonnet 4 (alias)
+        "claude-opus-4-20250514": 200000,       # Claude Opus 4
+        "claude-opus-4-0": 200000,              # Claude Opus 4 (alias)
+        # Claude 3 (deprecated)
+        "claude-3-haiku-20240307": 200000,      # Claude Haiku 3 (deprecated)
+    }
+
     def __init__(
         self,
         model: str = "claude-sonnet-4-6",
@@ -561,12 +586,7 @@ class ChatAnthropic(BaseChatLLM):
                 )
 
     def get_metadata(self) -> Metadata:
-        m = self._model.lower()
-        # Opus 4.6 and Sonnet 4.6 have 1M context; others 200k
-        if any(x in m for x in ("opus-4-6", "sonnet-4-6", "sonnet-4-5")):
-            context_window = 1000000
-        else:
-            context_window = 200000
+        context_window = self.MODELS.get(self._model, 200000)
         return Metadata(
             name=self._model,
             context_window=context_window,

@@ -17,6 +17,22 @@ class ChatCerebras(BaseChatLLM):
     Cerebras LLM implementation following the BaseChatLLM protocol.
     """
 
+    # Available models with context windows (tokens)
+    # Source: https://inference-docs.cerebras.ai/models/overview
+    MODELS = {
+        "gpt-oss-120b": 131072,                  # GPT-OSS 120B (reasoning)
+        "qwen-3-235b-a22b-instruct": 32768,      # Qwen3 235B
+        "qwen3-32b": 131072,                     # Qwen3 32B (reasoning)
+        "llama4-scout": 131072,                  # Llama 4 Scout
+        "llama-3.3-70b": 128000,                 # Llama 3.3 70B
+        "llama3.1-8b": 8192,                     # Llama 3.1 8B
+        "zai-glm-4.7": 32768,                    # ZAI-GLM 4.7 (reasoning)
+        "deepseek-r1-distill-llama-70b": 128000, # DeepSeek R1 Distill Llama 70B (reasoning)
+    }
+
+    # Models that support chain-of-thought reasoning
+    REASONING_PATTERNS = ("gpt-oss", "zai-glm", "qwen3", "deepseek-r1")
+
     def __init__(
         self,
         model: str = "gpt-oss-120b",
@@ -67,8 +83,7 @@ class ChatCerebras(BaseChatLLM):
 
     def _is_reasoning_model(self) -> bool:
         """Check if the model supports reasoning (gpt-oss, zai-glm, qwen3, deepseek-r1)."""
-        m = self._model.lower()
-        return any(p in m for p in ("gpt-oss", "zai-glm", "qwen3", "deepseek-r1"))
+        return any(p in self._model for p in self.REASONING_PATTERNS)
 
     def _format_assistant_content(self, content: str | None, thinking: str | None) -> str:
         """Format assistant content with thinking for Cerebras multi-turn.
@@ -508,21 +523,7 @@ class ChatCerebras(BaseChatLLM):
                 yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
 
     def get_metadata(self) -> Metadata:
-        m = self._model.lower()
-        if "qwen-3-235b" in m or "qwen3-235b" in m:
-            context_window = 32768
-        elif "qwen3-32b" in m:
-            context_window = 131072
-        elif "gpt-oss-120b" in m:
-            context_window = 131072
-        elif "llama4" in m or "llama-4" in m:
-            context_window = 131072
-        elif "llama-3.3" in m or "llama3.3" in m:
-            context_window = 128000
-        elif "llama-3.1" in m or "llama3.1" in m:
-            context_window = 8192
-        else:
-            context_window = 8192
+        context_window = self.MODELS.get(self._model, 8192)
         return Metadata(
             name=self._model,
             context_window=context_window,
