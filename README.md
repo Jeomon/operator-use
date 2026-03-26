@@ -34,8 +34,28 @@ Inspired by [nanobot](https://github.com/HKUDS/nanobot) and [OpenClaw](https://g
 
 ---
 
+## Multi-Agent in Action
+
+Two Operator agents — **Jarvis** and **Ultron** — communicating on the same machine.
+
+Jarvis detected a bug in the inter-agent tool (invalid Windows path characters), patched the code, rebooted itself, and successfully reached Ultron. Ultron was then assigned as a researcher and tasked with a deep analysis on photosynthesis — which it delivered in full.
+
+<table>
+  <tr>
+    <td><img src="examples/multi-agent/1-jarvis-fixes-tool-bug.png" width="380" alt="Jarvis detects and fixes tool bug"/><br/><sub>Jarvis spots the bug, fixes it, and connects to Ultron</sub></td>
+    <td><img src="examples/multi-agent/2-ultron-connection-established.png" width="380" alt="Connection established"/><br/><sub>Connection confirmed — agents communicating</sub></td>
+  </tr>
+  <tr>
+    <td><img src="examples/multi-agent/3-ultron-accepts-researcher-role.png" width="380" alt="Ultron accepts researcher role"/><br/><sub>Ultron accepts the researcher specialization</sub></td>
+    <td><img src="examples/multi-agent/4-ultron-photosynthesis-research.png" width="380" alt="Ultron delivers photosynthesis research"/><br/><sub>Ultron delivers a full research report on photosynthesis</sub></td>
+  </tr>
+</table>
+
+---
+
 ## Table of Contents
 
+- [Multi-Agent in Action](#multi-agent-in-action)
 - [Install](#-install)
 - [Quick Start](#-quick-start)
 - [Channels](#-channels)
