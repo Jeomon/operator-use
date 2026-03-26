@@ -145,6 +145,11 @@ async def browser(
     **kwargs,
 ) -> ToolResult:
     browser = kwargs.get("browser")
+    if browser is None:
+        return ToolResult.error_result("Browser is not available. Ensure browser_use plugin is enabled.")
+    if browser._client is None:
+        await browser.init_browser()
+        await browser.init_tabs()
 
     match action:
         case "goto":
