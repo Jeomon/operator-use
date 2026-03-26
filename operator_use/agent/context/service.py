@@ -2,6 +2,7 @@
 
 import operator_use
 from datetime import datetime
+from enum import Enum
 from getpass import getuser
 from pathlib import Path
 from platform import machine, system, python_version
@@ -11,6 +12,12 @@ from operator_use.agent.skills import Skills
 from operator_use.agent.memory import Memory
 
 BOOTSTRAP_FILENAMES = ["SOUL.md", "USER.md", "CODE.md", "AGENTS.md"]
+
+
+class PromptMode(str, Enum):
+    FULL    = "full"     # Main agent: full prompt with memory, bootstrap files, respond rules
+    MINIMAL = "minimal"  # Delegated agent: identity + skills only, no memory/user/soul files
+    NONE    = "none"     # Raw subagent: single-line identity only
 
 
 class Context:
@@ -105,11 +112,28 @@ When you need to remember something, write to {workspace_path}/memory/MEMORY.md
         parts.append(voice if is_voice else base + "\n- NEVER include message IDs like [bot_msg_id:N] or [msg_id:N] in your response. These are for your reference only.")
         return "\n".join(parts)
 
-    def build_system_prompt(self, is_voice: bool = False) -> str:
+    def build_system_prompt(
+        self,
+        is_voice: bool = False,
+        prompt_mode: PromptMode = PromptMode.FULL,
+        extra_system_prompt: str | None = None,
+    ) -> str:
+        if prompt_mode == PromptMode.NONE:
+            parts = [
+                "You are a subagent. Complete the delegated task and return your findings clearly. "
+                "Do not send messages to the user — your response is relayed by the delegating agent."
+            ]
+            if extra_system_prompt:
+                parts.append(extra_system_prompt)
+            return "\n\n".join(parts)
+
         parts = []
         parts.append(self.get_identity())
-        if bootstrap_parts := self._load_bootstrap_files():
-            parts.extend(bootstrap_parts)
+
+        if prompt_mode == PromptMode.FULL:
+            if bootstrap_parts := self._load_bootstrap_files():
+                parts.extend(bootstrap_parts)
+
         skills_summary = self.skills.build_skills_summary() or "(No skills available)"
         parts.append(f'''## Skills
 
@@ -118,11 +142,19 @@ You have access to the following skills to enhance your capabilities, to use a s
 Available Skills:
 {skills_summary}
 ''')
-        if memory_context := self.memory.get_memory_context():
-            parts.append(memory_context)
+        if prompt_mode == PromptMode.FULL:
+            if memory_context := self.memory.get_memory_context():
+                parts.append(memory_context)
+
+        if extra_system_prompt:
+            parts.append(f"## Task Context\n\n{extra_system_prompt}")
+
         if self._plugin_prompt_sections:
             parts.extend(self._plugin_prompt_sections)
-        parts.append(self.get_respond_behavior(is_voice=is_voice))
+
+        if prompt_mode == PromptMode.FULL:
+            parts.append(self.get_respond_behavior(is_voice=is_voice))
+
         return "\n".join(parts)
 
     def get_identity(self) -> str:
@@ -181,8 +213,14 @@ You are a helpful personal assistant.
         history: list[BaseMessage],
         is_voice: bool = False,
         session_id: str | None = None,
+        prompt_mode: PromptMode = PromptMode.FULL,
+        extra_system_prompt: str | None = None,
     ) -> list[BaseMessage]:
         """Build messages: [System, history]."""
-        messages = [SystemMessage(content=self.build_system_prompt(is_voice=is_voice))]
+        messages = [SystemMessage(content=self.build_system_prompt(
+            is_voice=is_voice,
+            prompt_mode=prompt_mode,
+            extra_system_prompt=extra_system_prompt,
+        ))]
         messages.extend(self._hydrate_history(history))
         return messages

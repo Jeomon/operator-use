@@ -24,4 +24,42 @@ AGENT_TOOLS = FILESYSTEM_TOOLS + WEB_TOOLS + TERMINAL_TOOLS + CRON_TOOLS + PROCE
 
 NON_AGENT_TOOLS = MESSAGE_TOOLS + CHANNEL_TOOLS
 
-__all__ = ["AGENT_TOOLS", "NON_AGENT_TOOLS"]
+ALL_TOOLS = AGENT_TOOLS + NON_AGENT_TOOLS
+
+# Tool profiles — base presets for per-agent tool configuration
+TOOL_PROFILES: dict[str, list] = {
+    "minimal": FILESYSTEM_TOOLS + WEB_TOOLS,
+    "coding":  FILESYSTEM_TOOLS + WEB_TOOLS + TERMINAL_TOOLS,
+    "full":    ALL_TOOLS,
+}
+
+
+def resolve_tools(
+    profile: str = "full",
+    also_allow: list[str] | None = None,
+    deny: list[str] | None = None,
+) -> list:
+    """Resolve a final tool list from a profile + allow/deny lists.
+
+    Args:
+        profile: Base preset name — "minimal", "coding", or "full".
+        also_allow: Tool names to add on top of the profile.
+        deny: Tool names to remove from the resolved list.
+    """
+    base = list(TOOL_PROFILES.get(profile, ALL_TOOLS))
+    tool_map = {t.name: t for t in ALL_TOOLS}
+
+    if also_allow:
+        present = {t.name for t in base}
+        for name in also_allow:
+            if name not in present and name in tool_map:
+                base.append(tool_map[name])
+
+    if deny:
+        deny_set = set(deny)
+        base = [t for t in base if t.name not in deny_set]
+
+    return base
+
+
+__all__ = ["AGENT_TOOLS", "NON_AGENT_TOOLS", "ALL_TOOLS", "TOOL_PROFILES", "resolve_tools"]

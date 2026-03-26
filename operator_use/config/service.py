@@ -139,6 +139,14 @@ class AgentDefaults(Base):
     streaming: bool = True
 
 
+class ToolsConfig(Base):
+    """Per-agent tool configuration."""
+
+    profile: str = "full"  # Base preset: "minimal", "coding", or "full"
+    also_allow: List[str] = Field(default_factory=list)  # Tool names to add on top of profile
+    deny: List[str] = Field(default_factory=list)         # Tool names to remove from resolved list
+
+
 class AgentDefinition(Base):
     """Individual agent definition."""
 
@@ -150,6 +158,7 @@ class AgentDefinition(Base):
     channels: Optional["ChannelsConfig"] = None  # Per-agent dedicated channel bots
     computer_use: bool = False  # Enable desktop/computer-use (GUI automation)
     browser_use: bool = True    # Enable browser-use (Chrome DevTools Protocol)
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)  # Tool profile + allow/deny
 
     @model_validator(mode="after")
     def check_exclusive_use(self) -> "AgentDefinition":

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Callable, Awaitable
 
 from operator_use.messages import AIMessage, HumanMessage, ImageMessage, ToolMessage
 from operator_use.agent.context import Context
+from operator_use.agent.context.service import PromptMode
 from operator_use.agent.tools import ToolRegistry, BUILTIN_TOOLS
 from operator_use.bus import IncomingMessage
 from operator_use.providers.events import LLMEventType, LLMStreamEventType
@@ -58,6 +59,7 @@ class Agent:
         cron: "Cron | None" = None,
         gateway=None,
         bus=None,
+        tools: list | None = None,
         exclude_tools: list | None = None,
         acp_registry: dict | None = None,
         plugins: "list[Plugin] | None" = None,
@@ -80,7 +82,7 @@ class Agent:
         self.process_store = ProcessStore()
         self.hooks = Hooks()
 
-        self.tool_register.register_tools(BUILTIN_TOOLS)
+        self.tool_register.register_tools(tools if tools is not None else BUILTIN_TOOLS)
         if exclude_tools:
             self.tool_register.unregister_tools(exclude_tools)
 
@@ -151,6 +153,8 @@ class Agent:
         incoming: "IncomingMessage | None" = None,
         publish_stream: "Callable[..., Awaitable[None]] | None" = None,
         pending_replies: "dict | None" = None,
+        prompt_mode: PromptMode = PromptMode.FULL,
+        extra_system_prompt: str | None = None,
     ) -> AIMessage:
         """Run the agentic loop for one message and return the AIMessage response.
 
@@ -181,10 +185,14 @@ class Agent:
 
         if publish_stream is not None:
             response_message = await self._loop_stream(
-                session=session, publish_stream=publish_stream, message=incoming
+                session=session, publish_stream=publish_stream, message=incoming,
+                prompt_mode=prompt_mode, extra_system_prompt=extra_system_prompt,
             )
         else:
-            response_message = await self._loop(session=session, message=incoming)
+            response_message = await self._loop(
+                session=session, message=incoming,
+                prompt_mode=prompt_mode, extra_system_prompt=extra_system_prompt,
+            )
 
         # Allow hooks to modify the final response before saving
         end_ctx = await self.hooks.emit(
@@ -247,6 +255,8 @@ class Agent:
         self,
         session: Session,
         message: "IncomingMessage | None",
+        prompt_mode: PromptMode = PromptMode.FULL,
+        extra_system_prompt: str | None = None,
     ) -> list:
         """Build the LLM message list: system prompt + history."""
         is_voice = (
@@ -257,7 +267,13 @@ class Agent:
             if message
             else False
         )
-        return await self.context.build_messages(history=session.get_history(), is_voice=is_voice, session_id=session.id)
+        return await self.context.build_messages(
+            history=session.get_history(),
+            is_voice=is_voice,
+            session_id=session.id,
+            prompt_mode=prompt_mode,
+            extra_system_prompt=extra_system_prompt,
+        )
 
     async def _execute_tool(self, tool_call, thinking, thinking_signature, session: Session):
         """Execute a tool call and append a ToolMessage to the session."""
@@ -307,11 +323,13 @@ class Agent:
         self,
         session: Session,
         message: "IncomingMessage | None" = None,
+        prompt_mode: PromptMode = PromptMode.FULL,
+        extra_system_prompt: str | None = None,
     ) -> AIMessage:
         """Non-streaming agentic loop."""
         tools = self.tool_register.list_tools()
         for iteration in range(self.max_iterations):
-            messages = await self._prepare_messages(session, message)
+            messages = await self._prepare_messages(session, message, prompt_mode, extra_system_prompt)
             logger.info(f"LLM call | model={self.llm.model_name} messages={len(messages)} tools={len(tools)}")
             if iteration == 0 and message:
                 await self.hooks.emit(
@@ -357,11 +375,13 @@ class Agent:
         session: Session,
         publish_stream: "Callable[..., Awaitable[None]]",
         message: "IncomingMessage | None" = None,
+        prompt_mode: PromptMode = PromptMode.FULL,
+        extra_system_prompt: str | None = None,
     ) -> AIMessage:
         """Streaming agentic loop."""
         tools = self.tool_register.list_tools()
         for iteration in range(self.max_iterations):
-            messages = await self._prepare_messages(session, message)
+            messages = await self._prepare_messages(session, message, prompt_mode, extra_system_prompt)
             thinking = None
             thinking_signature = None
             content = ""

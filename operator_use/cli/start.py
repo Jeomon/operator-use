@@ -176,6 +176,7 @@ def _build_agents(config: Config, cron, gateway, bus) -> dict[str, Agent]:
     """Instantiate one Agent per agent definition in config."""
     from operator_use.computer.plugin import ComputerPlugin
     from operator_use.web.plugin import BrowserPlugin
+    from operator_use.agent.tools.builtin import resolve_tools
 
     defaults = config.agents.defaults
     agent_defs = config.agents.list
@@ -198,6 +199,13 @@ def _build_agents(config: Config, cron, gateway, bus) -> dict[str, Agent]:
             BrowserPlugin(enabled=bool(defn.browser_use)),
         ]
 
+        tools_cfg = defn.tools
+        resolved_tools = resolve_tools(
+            profile=tools_cfg.profile,
+            also_allow=tools_cfg.also_allow,
+            deny=tools_cfg.deny,
+        )
+
         agents[defn.id] = Agent(
             llm=llm,
             agent_id=defn.id,
@@ -207,6 +215,7 @@ def _build_agents(config: Config, cron, gateway, bus) -> dict[str, Agent]:
             cron=cron,
             gateway=gateway,
             bus=bus,
+            tools=resolved_tools,
             acp_registry=config.acp_agents,
             plugins=plugins,
         )
