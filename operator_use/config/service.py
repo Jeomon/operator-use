@@ -242,6 +242,8 @@ class ProvidersConfig(Base):
     deepseek: ProviderConfig = Field(default_factory=ProviderConfig)
     grok: ProviderConfig = Field(default_factory=ProviderConfig)
     sarvam: ProviderConfig = Field(default_factory=ProviderConfig)
+    together: ProviderConfig = Field(default_factory=ProviderConfig)
+    fal: ProviderConfig = Field(default_factory=ProviderConfig)
     codex: ProviderConfig = Field(default_factory=ProviderConfig)
     claude_code: ProviderConfig = Field(default_factory=ProviderConfig)
     antigravity: ProviderConfig = Field(default_factory=ProviderConfig)

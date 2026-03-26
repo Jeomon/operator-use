@@ -115,6 +115,8 @@ TTS_CLASS_MAP = {
 IMAGE_CLASS_MAP = {
     "openai": "ImageOpenAI",
     "google": "ImageGoogle",
+    "together": "ImageTogether",
+    "fal": "ImageFal",
 }
 
 

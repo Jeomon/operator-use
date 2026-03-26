@@ -77,6 +77,16 @@ from operator_use.providers.google import TTSGoogle
 # Image generation providers
 from operator_use.providers.openai import ImageOpenAI
 from operator_use.providers.google import ImageGoogle
+
+try:
+    from operator_use.providers.together import ImageTogether
+except ImportError:
+    pass
+
+try:
+    from operator_use.providers.fal import ImageFal
+except ImportError:
+    pass
 from operator_use.providers.groq import TTSGroq
 
 try:
@@ -145,4 +155,6 @@ __all__ = [
     # Image generation providers
     "ImageOpenAI",
     "ImageGoogle",
+    "ImageTogether",
+    "ImageFal",
 ]
