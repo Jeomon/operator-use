@@ -61,7 +61,7 @@ class ImageGen(BaseModel):
 
 
 @Tool(
-    name="imagegen",
+    name="image_gen",
     description=(
         "Generate or edit an image using the configured image provider.\n\n"
         "Generation: call with just a prompt to create an image from scratch.\n"
