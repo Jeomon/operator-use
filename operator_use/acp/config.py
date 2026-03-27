@@ -11,7 +11,7 @@ class ACPServerConfig:
     host: str = "0.0.0.0"
     port: int = 8765
     # Stable UUID identifying this server instance across restarts (set by load_config)
-    server_id: str = ""
+    id: str = ""
     # Global bearer token — grants access to ALL agents (fallback when per_agent_tokens is empty)
     auth_token: str = ""
     # Per-agent bearer tokens: {agent_id: token}
