@@ -117,6 +117,13 @@ class ImageConfig(Base):
     style: Optional[str] = None
 
 
+class SearchConfig(Base):
+    """Web search provider configuration. Search is always enabled — users pick the provider."""
+
+    provider: Optional[str] = None   # "ddgs", "exa", "tavily" — defaults to ddgs if unset
+    api_key: Optional[str] = None    # required for exa and tavily
+
+
 class PeerMatch(Base):
     """Match a specific chat/channel/group within a platform."""
 
@@ -264,6 +271,7 @@ class Config(BaseSettings):
     stt: STTConfig = Field(default_factory=STTConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)
     image: ImageConfig = Field(default_factory=ImageConfig)
+    search: SearchConfig = Field(default_factory=SearchConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
     # Named registry of pre-approved remote ACP agents.

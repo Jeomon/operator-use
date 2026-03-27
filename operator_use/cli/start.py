@@ -119,6 +119,12 @@ IMAGE_CLASS_MAP = {
     "fal": "ImageFal",
 }
 
+SEARCH_CLASS_MAP = {
+    "ddgs":   "DDGSSearch",
+    "exa":    "ExaSearch",
+    "tavily": "TavilySearch",
+}
+
 
 def _make_llm(config: Config, llm_conf) -> Optional[BaseChatLLM]:
     import operator_use.providers as providers
@@ -163,6 +169,21 @@ def _make_tts(config: Config) -> Optional[BaseTTS]:
     if tts_conf.voice:
         tts_kwargs["voice"] = tts_conf.voice
     return tts_cls(**tts_kwargs)
+
+
+def _make_search(config: Config):
+    """Always returns a search provider — falls back to DDGSSearch if not configured."""
+    import operator_use.providers as providers
+    srch_conf = config.search
+    provider_key = srch_conf.provider or "ddgs"
+    srch_cls_name = SEARCH_CLASS_MAP.get(provider_key, "DDGSSearch")
+    srch_cls = getattr(providers, srch_cls_name, None)
+    if srch_cls is None:
+        from operator_use.providers.ddgs import DDGSSearch
+        return DDGSSearch()
+    if provider_key in ("exa", "tavily"):
+        return srch_cls(api_key=srch_conf.api_key or "")
+    return srch_cls()
 
 
 def _make_image(config: Config):
@@ -216,7 +237,7 @@ def _get_plugin_registry() -> dict[str, type]:
     return PLUGIN_REGISTRY
 
 
-def _build_agents(config: Config, cron, gateway, bus, image=None) -> dict[str, Agent]:
+def _build_agents(config: Config, cron, gateway, bus, image=None, search=None) -> dict[str, Agent]:
     """Instantiate one Agent per agent definition in config."""
     from operator_use.agent.tools.builtin import resolve_tools
 
@@ -270,6 +291,7 @@ def _build_agents(config: Config, cron, gateway, bus, image=None) -> dict[str, A
             acp_registry=config.acp_agents,
             plugins=plugins,
             image=image,
+            search=search,
         )
 
     for agent in agents.values():
@@ -472,7 +494,8 @@ async def main():
     cron = Cron(store_path=cron_store, on_job=on_job)
 
     image_provider = _make_image(config)
-    agents = _build_agents(config, cron=cron, gateway=gateway, bus=bus, image=image_provider)
+    search_provider = _make_search(config)  # always set, DDGS is the default
+    agents = _build_agents(config, cron=cron, gateway=gateway, bus=bus, image=image_provider, search=search_provider)
 
     # Add ACP server channel after agents are built so all agents are discoverable
     if acp_server_enabled:

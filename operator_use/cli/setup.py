@@ -232,6 +232,12 @@ IMAGE_PROVIDERS: dict[str, list[tuple[str, str]]] = {
     ],
 }
 
+SEARCH_PROVIDERS: dict[str, str] = {
+    "DuckDuckGo (free, no key needed)": "ddgs",
+    "Exa (semantic search, API key required)": "exa",
+    "Tavily (AI-optimized, API key required)": "tavily",
+}
+
 VOICES: dict[str, list[str]] = {
     "OpenAI": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"],
     "Groq": ["autumn", "diana", "hannah", "austin", "daniel", "troy"],
@@ -309,7 +315,7 @@ def _select_model(label: str, options: list[tuple[str, str]]) -> str:
 
 
 from operator_use.config import (
-    Config, LLMConfig, STTConfig, TTSConfig, ImageConfig,
+    Config, LLMConfig, STTConfig, TTSConfig, ImageConfig, SearchConfig,
     AgentDefaults, AgentsConfig, ProvidersConfig, ProviderConfig,
     ChannelsConfig, TelegramConfig, DiscordConfig, SlackConfig,
     AgentDefinition, ACPServerSettings, ACPAgentEntry, HeartbeatConfig,
@@ -353,6 +359,8 @@ def _save_config(
     image_enabled: bool,
     image_provider_key: str,
     image_model: str,
+    search_provider_key: str,
+    search_api_key: str,
     heartbeat_enabled: bool,
     heartbeat_llm_provider_key: str,
     heartbeat_llm_model: str,
@@ -407,6 +415,7 @@ def _save_config(
         stt=STTConfig(enabled=stt_enabled, provider=stt_provider_key or None, model=stt_model or None),
         tts=TTSConfig(enabled=tts_enabled, provider=tts_provider_key or None, model=tts_model or None, voice=tts_voice),
         image=ImageConfig(enabled=image_enabled, provider=image_provider_key or None, model=image_model or None),
+        search=SearchConfig(provider=search_provider_key or "ddgs", api_key=search_api_key or None),
         providers=providers,
         acp_server=acp_server or ACPServerSettings(),
         acp_agents=acp_agents or {},
@@ -525,6 +534,8 @@ def run_first_install():
         image_enabled=False,
         image_provider_key="",
         image_model="",
+        search_provider_key="ddgs",
+        search_api_key="",
         heartbeat_enabled=False,
         heartbeat_llm_provider_key="",
         heartbeat_llm_model="",
@@ -585,6 +596,10 @@ def run_initial_setup():
     image_enabled: bool     = bool(_img.get("enabled", False))
     image_provider_key: str = _img.get("provider", "") or ""
     image_model: str        = _img.get("model", "") or ""
+
+    _srch = existing_data.get("search", {})
+    search_provider_key: str = _srch.get("provider", "") or "ddgs"
+    search_api_key: str      = _srch.get("api_key", "") or ""
 
     # ACP server settings
     _acp_srv = existing_data.get("acpServer", existing_data.get("acp_server", {}))
@@ -965,10 +980,12 @@ def run_initial_setup():
             acp_agents_count = len(acp_agents)
             acp_label = f"{acp_srv_label}, {acp_agents_count} remote agent{'s' if acp_agents_count != 1 else ''}" if acp_server.enabled or acp_agents_count else "disabled"
 
+            search_label = search_provider_key if search_provider_key else "ddgs"
             choice = select("What would you like to configure?", [
                 f"STT           {stt_label}",
                 f"TTS           {tts_label}",
                 f"Image         {image_label}",
+                f"Search        {search_label}",
                 f"Heartbeat     {hb_label}",
                 f"Agents        {agents_label}",
                 f"ACP           {acp_label}",
@@ -1018,6 +1035,14 @@ def run_initial_setup():
                     image_provider_key = ""
                     image_model = ""
 
+            elif choice.startswith("Search"):
+                prov_display = select("Pick the search provider:", list(SEARCH_PROVIDERS.keys()))
+                search_provider_key = SEARCH_PROVIDERS[prov_display]
+                if search_provider_key in ("exa", "tavily"):
+                    search_api_key = text_input(f"Enter API key for {prov_display}:", is_password=True)
+                else:
+                    search_api_key = ""
+
             elif choice.startswith("Heartbeat"):
                 heartbeat_enabled = confirm("Enable Heartbeat? (agent runs periodic self-maintenance tasks)")
                 if heartbeat_enabled:
@@ -1062,6 +1087,8 @@ def run_initial_setup():
         image_enabled=image_enabled,
         image_provider_key=image_provider_key,
         image_model=image_model,
+        search_provider_key=search_provider_key,
+        search_api_key=search_api_key,
         heartbeat_enabled=heartbeat_enabled,
         heartbeat_llm_provider_key=heartbeat_llm_provider_key,
         heartbeat_llm_model=heartbeat_llm_model,
