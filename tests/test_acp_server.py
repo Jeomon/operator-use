@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import pytest
 import pytest_asyncio
 from aiohttp.test_utils import TestClient, TestServer

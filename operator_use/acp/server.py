@@ -34,7 +34,6 @@ from aiohttp import web
 from operator_use.acp.config import ACPServerConfig
 from operator_use.acp.provenance import ACPProvenance, fetch_public_key
 from operator_use.acp.models import (
-    AgentCapabilities,
     AgentListResponse,
     AgentMetadata,
     MessagePart,
