@@ -147,7 +147,7 @@ class BrowserPlugin(Plugin):
         from operator_use.web.browser.service import Browser
         from operator_use.web.browser.config import BrowserConfig
         if self.browser is None:
-            self.browser = Browser(config=BrowserConfig())
+            self.browser = Browser(config=BrowserConfig(use_system_profile=True))
 
     async def enable(self) -> None:
         """Dynamically enable browser_use at runtime."""

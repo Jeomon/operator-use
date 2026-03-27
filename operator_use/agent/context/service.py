@@ -124,6 +124,11 @@ When you need to remember something, write to {workspace_path}/memory/MEMORY.md
         system_prompt: str | None = None,
     ) -> str:
         if prompt_mode == PromptMode.NONE:
+            if self._plugin_prompt_sections:
+                parts = list(self._plugin_prompt_sections)
+                if system_prompt:
+                    parts.append(f"## Task Context\n\n{system_prompt}")
+                return "\n\n".join(parts)
             parts = [
                 "You are a subagent. Complete the delegated task and return your findings clearly. "
                 "Do not send messages to the user — your response is relayed by the delegating agent."
