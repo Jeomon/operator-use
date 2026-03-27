@@ -28,45 +28,48 @@ class ImageTogether(BaseImage):
     generation and image-to-image editing.
 
     Generation (no images):
-        Supports FLUX.1, SDXL, and other open-weight models.
+        Supports FLUX.1, FLUX.1.1, FLUX.2, Ideogram, Seedream, HiDream,
+        and other open-weight models hosted on Together AI.
 
     Editing (images provided):
-        The first image is sent as ``image_url`` in the request. Requires a
-        model that supports image-to-image (e.g. FLUX.1 Kontext or img2img
-        variants). ``strength`` controls how much the output deviates from the
-        input (0.0 = unchanged, 1.0 = completely new).
+        The first image is sent as ``image_url`` in the request. Best results
+        with FLUX.1 Kontext models (instruction-based editing) or FLUX.2 Flex/Pro.
+        ``strength`` controls deviation from the input (0.0 = unchanged, 1.0 = new).
 
     Args:
-        model: The model to use (default: "black-forest-labs/FLUX.1-schnell-Free").
+        model: The model to use (default: ``"black-forest-labs/FLUX.1.1-pro"``).
             Popular options:
-              "black-forest-labs/FLUX.1-schnell-Free"  (free tier, generation only)
-              "black-forest-labs/FLUX.1-schnell"
-              "black-forest-labs/FLUX.1-dev"
-              "black-forest-labs/FLUX.1.1-pro"
-              "black-forest-labs/FLUX.1-canny"         (img2img via control)
-              "black-forest-labs/FLUX.1-depth"         (img2img via depth)
+              ``"black-forest-labs/FLUX.1-schnell-Free"``  (free tier)
+              ``"black-forest-labs/FLUX.1.1-pro"``         (recommended quality)
+              ``"black-forest-labs/FLUX.2-pro"``           (latest generation)
+              ``"black-forest-labs/FLUX.2-max"``           (highest quality)
+              ``"black-forest-labs/FLUX.1-kontext-pro"``   (instruction-based editing)
+              ``"black-forest-labs/FLUX.1-kontext-max"``   (editing, max quality)
+              ``"ideogram/ideogram-3.0"``                  (strong typography)
+              ``"stabilityai/stable-diffusion-3-medium"``
         width: Image width in pixels (default: 1024).
         height: Image height in pixels (default: 1024).
-        steps: Number of inference steps (default: 4 for schnell).
-        api_key: Together AI API key. Falls back to TOGETHER_API_KEY env variable.
+        steps: Number of inference steps (default: 4).
+        api_key: Together AI API key. Falls back to ``TOGETHER_API_KEY`` env variable.
 
     Example:
         ```python
         from operator_use.providers.together import ImageTogether
 
-        provider = ImageTogether(model="black-forest-labs/FLUX.1-dev")
+        provider = ImageTogether(model="black-forest-labs/FLUX.1.1-pro")
 
         # Generate from scratch
         provider.generate("a red panda coding on a laptop", "output.png")
 
-        # Edit with a reference image
-        provider.generate("make it sunset", "output.png", images=["input.png"], strength=0.7)
+        # Edit with a reference image (use a Kontext or FLUX.2 model)
+        provider = ImageTogether(model="black-forest-labs/FLUX.1-kontext-pro")
+        provider.generate("make it look like a watercolour painting", "output.png", images=["input.png"])
         ```
     """
 
     def __init__(
         self,
-        model: str = "black-forest-labs/FLUX.1-schnell-Free",
+        model: str = "black-forest-labs/FLUX.1.1-pro",
         width: int = 1024,
         height: int = 1024,
         steps: int = 4,

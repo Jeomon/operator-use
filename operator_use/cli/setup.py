@@ -195,6 +195,43 @@ TTS_PROVIDERS: dict[str, list[tuple[str, str]]] = {
     ],
 }
 
+IMAGE_PROVIDERS: dict[str, list[tuple[str, str]]] = {
+    "OpenAI": [
+        ("GPT Image 1.5 (recommended, latest)", "gpt-image-1.5"),
+        ("GPT Image 1", "gpt-image-1"),
+        ("GPT Image 1 Mini (cost-efficient)", "gpt-image-1-mini"),
+        ("ChatGPT Image Latest (alias → newest snapshot)", "chatgpt-image-latest"),
+    ],
+    "Google": [
+        ("Gemini 2.5 Flash Image (gen + edit, recommended)", "gemini-2.5-flash-image"),
+        ("Gemini 3 Pro Image Preview (gen + edit, studio quality)", "gemini-3-pro-image-preview"),
+        ("Gemini 3.1 Flash Image Preview (gen + edit, high volume)", "gemini-3.1-flash-image-preview"),
+        ("Imagen 4 Standard (text-to-image only)", "imagen-4.0-generate-001"),
+        ("Imagen 4 Ultra (text-to-image only, highest quality)", "imagen-4.0-ultra-generate-001"),
+        ("Imagen 4 Fast (text-to-image only, low latency)", "imagen-4.0-fast-generate-001"),
+    ],
+    "Together": [
+        ("FLUX.1 Schnell Free (free tier)", "black-forest-labs/FLUX.1-schnell-Free"),
+        ("FLUX.1.1 Pro (recommended quality)", "black-forest-labs/FLUX.1.1-pro"),
+        ("FLUX.2 Pro (latest generation)", "black-forest-labs/FLUX.2-pro"),
+        ("FLUX.2 Max (highest quality)", "black-forest-labs/FLUX.2-max"),
+        ("FLUX.1 Kontext Pro (instruction-based editing)", "black-forest-labs/FLUX.1-kontext-pro"),
+        ("FLUX.1 Kontext Max (editing, max quality)", "black-forest-labs/FLUX.1-kontext-max"),
+        ("Ideogram 3.0 (strong typography)", "ideogram/ideogram-3.0"),
+    ],
+    "fal": [
+        ("FLUX.1 Pro v1.1 (recommended quality)", "fal-ai/flux-pro/v1.1"),
+        ("FLUX.1 Pro v1.1 Ultra (up to 2K)", "fal-ai/flux-pro/v1.1-ultra"),
+        ("FLUX.2 Pro (latest generation)", "fal-ai/flux-2-pro"),
+        ("FLUX.2 Max (highest quality)", "fal-ai/flux-2-max"),
+        ("FLUX.1 Kontext Pro (instruction-based editing)", "fal-ai/flux-pro/kontext"),
+        ("FLUX.1 Schnell (fastest)", "fal-ai/flux/schnell"),
+        ("FLUX.1 Dev (open weights)", "fal-ai/flux/dev"),
+        ("Recraft V3 (vectors & typography)", "fal-ai/recraft/v3/text-to-image"),
+        ("Ideogram V3 (strong typography)", "fal-ai/ideogram/v3"),
+    ],
+}
+
 VOICES: dict[str, list[str]] = {
     "OpenAI": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"],
     "Groq": ["autumn", "diana", "hannah", "austin", "daniel", "troy"],
@@ -272,7 +309,7 @@ def _select_model(label: str, options: list[tuple[str, str]]) -> str:
 
 
 from operator_use.config import (
-    Config, LLMConfig, STTConfig, TTSConfig,
+    Config, LLMConfig, STTConfig, TTSConfig, ImageConfig,
     AgentDefaults, AgentsConfig, ProvidersConfig, ProviderConfig,
     ChannelsConfig, TelegramConfig, DiscordConfig, SlackConfig,
     AgentDefinition, ACPServerSettings, ACPAgentEntry, HeartbeatConfig,
@@ -313,6 +350,9 @@ def _save_config(
     tts_provider_key: str,
     tts_model: str,
     tts_voice: str | None,
+    image_enabled: bool,
+    image_provider_key: str,
+    image_model: str,
     heartbeat_enabled: bool,
     heartbeat_llm_provider_key: str,
     heartbeat_llm_model: str,
@@ -366,6 +406,7 @@ def _save_config(
         ),
         stt=STTConfig(enabled=stt_enabled, provider=stt_provider_key or None, model=stt_model or None),
         tts=TTSConfig(enabled=tts_enabled, provider=tts_provider_key or None, model=tts_model or None, voice=tts_voice),
+        image=ImageConfig(enabled=image_enabled, provider=image_provider_key or None, model=image_model or None),
         providers=providers,
         acp_server=acp_server or ACPServerSettings(),
         acp_agents=acp_agents or {},
@@ -481,6 +522,9 @@ def run_first_install():
         tts_provider_key="",
         tts_model="",
         tts_voice=None,
+        image_enabled=False,
+        image_provider_key="",
+        image_model="",
         heartbeat_enabled=False,
         heartbeat_llm_provider_key="",
         heartbeat_llm_model="",
@@ -521,6 +565,7 @@ def run_initial_setup():
     _defaults = existing_data.get("agents", {}).get("defaults", {})
     _stt = existing_data.get("stt", {})
     _tts = existing_data.get("tts", {})
+    _img = existing_data.get("image", {})
     _hb = existing_data.get("heartbeat", {})
     heartbeat_enabled: bool = bool(_hb.get("enabled", False))
     _hb_llm = _hb.get("llmConfig", _hb.get("llm_config", {})) or {}
@@ -536,6 +581,10 @@ def run_initial_setup():
     tts_provider_key: str = _tts.get("provider", "") or ""
     tts_model: str        = _tts.get("model", "") or ""
     tts_voice: str | None = _tts.get("voice", None)
+
+    image_enabled: bool     = bool(_img.get("enabled", False))
+    image_provider_key: str = _img.get("provider", "") or ""
+    image_model: str        = _img.get("model", "") or ""
 
     # ACP server settings
     _acp_srv = existing_data.get("acpServer", existing_data.get("acp_server", {}))
@@ -907,6 +956,7 @@ def run_initial_setup():
             _render_configure_screen()
             stt_label    = f"{stt_provider_key} / {stt_model}" if stt_enabled else "disabled"
             tts_label    = f"{tts_provider_key} / {tts_model}" if tts_enabled else "disabled"
+            image_label  = f"{image_provider_key} / {image_model}" if image_enabled else "disabled"
             agents_label = ", ".join(a["id"] for a in agent_defs)
             hb_llm_label = f"  [{heartbeat_llm_provider_key} / {heartbeat_llm_model}]" if heartbeat_enabled and heartbeat_llm_provider_key else ""
             hb_label     = f"enabled{hb_llm_label}" if heartbeat_enabled else "disabled"
@@ -918,6 +968,7 @@ def run_initial_setup():
             choice = select("What would you like to configure?", [
                 f"STT           {stt_label}",
                 f"TTS           {tts_label}",
+                f"Image         {image_label}",
                 f"Heartbeat     {hb_label}",
                 f"Agents        {agents_label}",
                 f"ACP           {acp_label}",
@@ -953,6 +1004,19 @@ def run_initial_setup():
                     tts_provider_key = ""
                     tts_model = ""
                     tts_voice = None
+
+            elif choice.startswith("Image"):
+                if confirm("Enable Image Generation?"):
+                    prov_name = select("Pick the image provider:", list(IMAGE_PROVIDERS.keys()))
+                    image_provider_key = get_provider_key(prov_name)
+                    image_model = _select_model("Pick the image model:", IMAGE_PROVIDERS[prov_name])
+                    if _need_key(image_provider_key, prov_name):
+                        api_keys_dict[image_provider_key] = text_input(f"Enter API Key for {prov_name}:", is_password=True)
+                    image_enabled = True
+                else:
+                    image_enabled = False
+                    image_provider_key = ""
+                    image_model = ""
 
             elif choice.startswith("Heartbeat"):
                 heartbeat_enabled = confirm("Enable Heartbeat? (agent runs periodic self-maintenance tasks)")
@@ -995,6 +1059,9 @@ def run_initial_setup():
         tts_provider_key=tts_provider_key,
         tts_model=tts_model,
         tts_voice=tts_voice,
+        image_enabled=image_enabled,
+        image_provider_key=image_provider_key,
+        image_model=image_model,
         heartbeat_enabled=heartbeat_enabled,
         heartbeat_llm_provider_key=heartbeat_llm_provider_key,
         heartbeat_llm_model=heartbeat_llm_model,

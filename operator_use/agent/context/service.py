@@ -7,7 +7,7 @@ from getpass import getuser
 from pathlib import Path
 from platform import machine, system, python_version
 
-from operator_use.messages import BaseMessage, SystemMessage, HumanMessage, AIMessage
+from operator_use.messages import BaseMessage, SystemMessage, HumanMessage, AIMessage, ImageMessage
 from operator_use.agent.skills import Skills
 from operator_use.agent.memory import Memory
 from operator_use.agent.knowledge import Knowledge
@@ -183,10 +183,37 @@ You are a helpful personal assistant.
 '''
 
     def _hydrate_history(self, history: list[BaseMessage]) -> list[BaseMessage]:
-        """Inject channel metadata into message content so the LLM can see IDs for reactions/references."""
+        """Inject channel metadata into message content so the LLM can see IDs for reactions/references.
+
+        Also strips image data from all ImageMessage instances except the most recent one —
+        older images are replaced with a lightweight HumanMessage referencing the file paths,
+        avoiding repeated large base64 payloads on every subsequent LLM call.
+        """
+        # Find index of the last ImageMessage so we keep its pixel data intact
+        last_image_idx = -1
+        for i, msg in enumerate(history):
+            if isinstance(msg, ImageMessage):
+                last_image_idx = i
+
         hydrated = []
-        for msg in history:
-            if isinstance(msg, HumanMessage) and msg.metadata:
+        for i, msg in enumerate(history):
+            # Downgrade old ImageMessages to plain text references
+            if isinstance(msg, ImageMessage) and i != last_image_idx:
+                paths = msg.metadata.get("image_paths") or []
+                if paths:
+                    path_str = ", ".join(paths)
+                    ref = f"[{len(paths)} image(s): {path_str}]"
+                else:
+                    n = len(msg.images) if msg.images else 1
+                    ref = f"[{n} image(s) — data no longer available]"
+                text = f"{ref} {msg.content}".strip()
+                msg_id = msg.metadata.get("message_id")
+                if msg_id is not None:
+                    text = f"[msg_id:{msg_id}] {text}"
+                hydrated.append(HumanMessage(content=text, metadata=msg.metadata))
+                continue
+
+            if isinstance(msg, (HumanMessage, ImageMessage)) and msg.metadata:
                 msg_id = msg.metadata.get("message_id")
                 if msg_id is not None:
                     hydrated.append(HumanMessage(

@@ -141,6 +141,7 @@ class Orchestrator:
         parts = message.parts or []
         texts: list[str] = []
         images: list = []
+        image_paths: list[str] = []
 
         for part in parts:
             if isinstance(part, TextPart):
@@ -155,6 +156,8 @@ class Orchestrator:
                         audio_val = "[transcription failed]"
                 texts.append(audio_val.strip())
             elif isinstance(part, ImagePart) and part.images:
+                if part.paths:
+                    image_paths.extend(part.paths)
                 for b64 in part.images:
                     try:
                         data = base64.b64decode(b64)
@@ -172,7 +175,8 @@ class Orchestrator:
         if not images:
             return HumanMessage(content=content)
 
-        return ImageMessage(content=content, images=images, mime_type="image/jpeg")
+        metadata: dict = {"image_paths": image_paths} if image_paths else {}
+        return ImageMessage(content=content, images=images, mime_type="image/jpeg", metadata=metadata)
 
     # ------------------------------------------------------------------
     # Outgoing building (AIMessage → OutgoingMessage)

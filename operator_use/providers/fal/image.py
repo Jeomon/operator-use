@@ -22,37 +22,44 @@ def _encode_image_b64(path: str) -> str:
 class ImageFal(BaseImage):
     """fal.ai image generation and editing provider.
 
-    Uses the fal-client SDK to run FLUX and other models on fal.ai.
+    Uses the fal-client SDK to run FLUX, Kontext, Recraft, Ideogram, and
+    other models on fal.ai.
     Requires the ``fal-client`` package: ``pip install fal-client``
 
     Generation (no images):
-        Runs the configured model with a text prompt.
+        Runs the configured ``model`` endpoint with a text prompt.
 
     Editing (images provided):
-        Switches to the ``image_to_image_model`` endpoint and passes the
-        first image as ``image_url``. ``strength`` controls how much the
-        output deviates from the input (0.0 = unchanged, 1.0 = fully
-        regenerated).
+        Switches to the ``image_to_image_model`` endpoint and passes the first
+        image as ``image_url``. The default editing model is FLUX.1 Kontext Pro
+        — an instruction-based editor that follows natural-language edit prompts
+        without needing ``strength`` tuning.
 
     Args:
-        model: The fal model ID for generation (default: "fal-ai/flux/schnell").
+        model: The fal endpoint for text-to-image generation
+            (default: ``"fal-ai/flux-pro/v1.1"``).
             Popular options:
-              "fal-ai/flux/schnell"          (fastest, 4 steps)
-              "fal-ai/flux/dev"              (higher quality)
-              "fal-ai/flux-pro"              (best quality, paid)
-              "fal-ai/flux-pro/v1.1"
-              "fal-ai/stable-diffusion-v3-medium"
-        image_to_image_model: Model used when input images are provided
-            (default: "fal-ai/flux/dev/image-to-image").
+              ``"fal-ai/flux/schnell"``             (fastest, 4 steps)
+              ``"fal-ai/flux/dev"``                 (quality, open weights)
+              ``"fal-ai/flux-pro/v1.1"``            (recommended quality)
+              ``"fal-ai/flux-pro/v1.1-ultra"``      (up to 2K resolution)
+              ``"fal-ai/flux-2-pro"``               (latest FLUX.2)
+              ``"fal-ai/flux-2-max"``               (highest quality FLUX.2)
+              ``"fal-ai/recraft/v3/text-to-image"`` (vectors & typography)
+              ``"fal-ai/ideogram/v3"``              (strong typography)
+        image_to_image_model: Endpoint used when input images are provided
+            (default: ``"fal-ai/flux-pro/kontext"``).
             Popular options:
-              "fal-ai/flux/dev/image-to-image"
-              "fal-ai/flux-pro/v1/redux"
-              "fal-ai/flux-lora/image-to-image"
-        image_size: Output size preset for generation (default: "landscape_4_3").
-            Options: "square_hd", "square", "portrait_4_3", "portrait_16_9",
-                     "landscape_4_3", "landscape_16_9".
-        num_inference_steps: Steps for generation (default: 4 for schnell).
-        api_key: fal.ai API key. Falls back to FAL_KEY env variable.
+              ``"fal-ai/flux-pro/kontext"``         (instruction-based, recommended)
+              ``"fal-ai/flux-pro/kontext/max"``     (kontext, max quality)
+              ``"fal-ai/flux-2-pro/edit"``          (FLUX.2 editing)
+              ``"fal-ai/flux-2-flex/edit"``         (FLUX.2 flex editing)
+              ``"fal-ai/flux/dev/image-to-image"``  (classic img2img)
+        image_size: Output size preset for generation (default: ``"landscape_4_3"``).
+            Options: ``"square_hd"``, ``"square"``, ``"portrait_4_3"``,
+                     ``"portrait_16_9"``, ``"landscape_4_3"``, ``"landscape_16_9"``.
+        num_inference_steps: Steps for generation (default: 4).
+        api_key: fal.ai API key. Falls back to ``FAL_KEY`` env variable.
 
     Example:
         ```python
@@ -63,15 +70,15 @@ class ImageFal(BaseImage):
         # Generate from scratch
         provider.generate("a red panda coding on a laptop", "output.png")
 
-        # Edit with a reference image
-        provider.generate("make it sunset", "output.png", images=["input.png"], strength=0.85)
+        # Edit with a reference image (uses FLUX.1 Kontext Pro by default)
+        provider.generate("make it look like a pencil sketch", "output.png", images=["input.png"])
         ```
     """
 
     def __init__(
         self,
-        model: str = "fal-ai/flux/schnell",
-        image_to_image_model: str = "fal-ai/flux/dev/image-to-image",
+        model: str = "fal-ai/flux-pro/v1.1",
+        image_to_image_model: str = "fal-ai/flux-pro/kontext",
         image_size: str = "landscape_4_3",
         num_inference_steps: int = 4,
         api_key: Optional[str] = None,
@@ -92,14 +99,17 @@ class ImageFal(BaseImage):
         """Return (endpoint, arguments) depending on whether images are provided."""
         if images:
             endpoint = kwargs.get("image_to_image_model", self.image_to_image_model)
-            args = {
+            args: dict = {
                 "prompt": prompt,
                 "image_url": _encode_image_b64(images[0]),
-                "strength": kwargs.get("strength", 0.85),
-                "num_inference_steps": kwargs.get("num_inference_steps", 28),
                 "num_images": 1,
                 "enable_safety_checker": True,
             }
+            # strength is relevant for classic img2img but not Kontext — pass only if explicitly set
+            if "strength" in kwargs:
+                args["strength"] = kwargs["strength"]
+            if kwargs.get("num_inference_steps"):
+                args["num_inference_steps"] = kwargs["num_inference_steps"]
             if kwargs.get("image_size"):
                 args["image_size"] = kwargs["image_size"]
         else:
@@ -113,9 +123,6 @@ class ImageFal(BaseImage):
             }
         return endpoint, args
 
-    def _save_from_url(self, url: str, output_path: str) -> None:
-        urllib.request.urlretrieve(url, output_path)
-
     def generate(self, prompt: str, output_path: str, images: list[str] | None = None, **kwargs) -> None:
         try:
             import fal_client
@@ -125,7 +132,7 @@ class ImageFal(BaseImage):
         endpoint, args = self._build_arguments(prompt, images, **kwargs)
         result = fal_client.run(endpoint, arguments=args)
         url = result["images"][0]["url"]
-        self._save_from_url(url, output_path)
+        urllib.request.urlretrieve(url, output_path)
         logger.debug(f"[ImageFal] Image saved to {output_path}")
 
     async def agenerate(self, prompt: str, output_path: str, images: list[str] | None = None, **kwargs) -> None:
