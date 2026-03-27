@@ -111,8 +111,8 @@ class Agent:
         self.tool_register.set_extension("_process_store", self.process_store)
         self.tool_register.set_extension("_acp_registry", acp_registry or {})
         self.tool_register.set_extension("_llm", self.llm)
-        self.tool_register.set_extension("_image_provider", image)
-        self.tool_register.set_extension("_search_provider", search)
+        self.tool_register.set_extension("_image", image)
+        self.tool_register.set_extension("_search", search)
         self.tool_register.set_extension("_agent", self)
         self.tool_register.set_extension("_agent_id", self.agent_id)
 

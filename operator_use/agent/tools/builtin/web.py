@@ -35,7 +35,7 @@ class WebSearch(BaseModel):
 
 @Tool(name="web_search", description="Search the web and return titles, URLs, and snippets. Use for current events, documentation, package info, or error messages. Follow up with web_fetch to read the full content of a result.", model=WebSearch)
 async def web_search(query: str, max_results: int = 10, **kwargs) -> ToolResult:
-    provider = kwargs.get("_search_provider")
+    provider = kwargs.get("_search")
     if provider is None:
         from operator_use.providers.ddgs import DDGSSearch
         provider = DDGSSearch()
@@ -87,7 +87,7 @@ async def web_fetch(url: str, prompt: str | None = None, timeout: int = 10, **kw
     if not parsed_url.scheme or parsed_url.scheme not in ["http", "https"]:
         return ToolResult.error_result(f"Invalid URL: {url}. Must be http:// or https://")
 
-    provider = kwargs.get("_search_provider")
+    provider = kwargs.get("_search")
     if provider is None:
         from operator_use.providers.ddgs import DDGSSearch
         provider = DDGSSearch()

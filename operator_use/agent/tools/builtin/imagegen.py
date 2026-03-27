@@ -81,7 +81,7 @@ async def imagegen(
     send_result: bool = True,
     **kwargs,
 ) -> ToolResult:
-    provider = kwargs.get("_image_provider")
+    provider = kwargs.get("_image")
     if provider is None:
         return ToolResult.error_result(
             "No image provider is configured. "
