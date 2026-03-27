@@ -2,17 +2,19 @@
 
 When enabled, this channel:
   1. Starts an ACP-compliant REST server that accepts runs from external ACP clients
-     (e.g. Claude Code, Zed, JetBrains) and routes them through the Operator agent.
+     (e.g. Claude Code, Zed, JetBrains) and routes them to the correct Operator agent.
   2. Translates ACP RunCreateRequest → IncomingMessage (bus) and
      OutgoingMessage (bus) → ACP run output / SSE stream.
+  3. Exposes all configured agents via GET /agents so remote machines can discover them.
 
-Config example (in your runner setup):
+Config example (multi-agent):
     from operator_use.acp.channel import ACPChannel
     from operator_use.acp.config import ACPServerConfig
 
     acp_channel = ACPChannel(
-        ACPServerConfig(enabled=True, port=8765),
+        config=ACPServerConfig(enabled=True, port=8765),
         bus=bus,
+        agents=agents,   # dict[str, Agent] from the Orchestrator
     )
     gateway.add_channel(acp_channel)
 """
@@ -21,10 +23,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
 
 from operator_use.acp.config import ACPServerConfig
-from operator_use.acp.server import ACPServer
+from operator_use.acp.models import AgentCapabilities, AgentMetadata
+from operator_use.acp.server import ACPServer, AgentRunnerFn
 from operator_use.bus.views import (
     IncomingMessage,
     OutgoingMessage,
@@ -41,15 +43,95 @@ class ACPChannel(BaseChannel):
     """ACP server as a gateway channel.
 
     External ACP clients send runs → converted to IncomingMessages on the bus.
+    Each run is routed to the correct agent via account_id on the IncomingMessage.
     Agent responses (OutgoingMessages) → collected and surfaced back to the ACP client
     via the run output / SSE stream.
+
+    Pass `agents` (dict[str, Agent]) to expose all agents via GET /agents and enable
+    per-agent routing.  Omitting `agents` falls back to the single-agent behaviour
+    using the agent_id/name/description fields in config.
     """
 
-    def __init__(self, config: ACPServerConfig, bus=None) -> None:
+    def __init__(self, config: ACPServerConfig, bus=None, agents: dict | None = None) -> None:
         super().__init__(config, bus)
         # Pending response queues: chat_id (== run_id) -> asyncio.Queue[str | None]
         self._response_queues: dict[str, asyncio.Queue] = {}
-        self._server = ACPServer(config, self._agent_runner)
+
+        runners, metadata = self._build_runners_and_metadata(config, agents)
+        self._server = ACPServer(config=config, runners=runners, metadata=metadata)
+
+    # ------------------------------------------------------------------
+    # Builder helpers
+    # ------------------------------------------------------------------
+
+    def _build_runners_and_metadata(
+        self,
+        config: ACPServerConfig,
+        agents: dict | None,
+    ) -> tuple[dict[str, AgentRunnerFn], dict[str, AgentMetadata]]:
+        """Build per-agent runners and metadata from the agents registry.
+
+        If agents is None or empty, falls back to a single runner using the
+        agent_id/name/description from ACPServerConfig (backward compat).
+        """
+        if agents:
+            runners: dict[str, AgentRunnerFn] = {
+                aid: self._make_runner(aid) for aid in agents
+            }
+            metadata: dict[str, AgentMetadata] = {
+                aid: AgentMetadata(
+                    id=aid,
+                    name=aid,
+                    description=getattr(agent, "description", "") or "",
+                    capabilities=AgentCapabilities(streaming=True, async_mode=True, session=True),
+                )
+                for aid, agent in agents.items()
+            }
+        else:
+            # Legacy single-agent fallback
+            fallback_id = config.agent_id
+            runners = {fallback_id: self._make_runner(fallback_id)}
+            metadata = {
+                fallback_id: AgentMetadata(
+                    id=fallback_id,
+                    name=config.agent_name,
+                    description=config.agent_description,
+                    capabilities=AgentCapabilities(streaming=True, async_mode=True, session=True),
+                )
+            }
+        return runners, metadata
+
+    def _make_runner(self, agent_id: str) -> AgentRunnerFn:
+        """Return a runner coroutine-generator bound to a specific agent."""
+        async def runner(input_text: str, session_id: str | None):
+            import uuid
+            run_id = session_id or str(uuid.uuid4())
+            queue: asyncio.Queue[str | None] = asyncio.Queue()
+            self._response_queues[run_id] = queue
+
+            incoming = IncomingMessage(
+                channel=self.name,
+                chat_id=run_id,
+                # account_id carries the target agent — the Orchestrator router
+                # matches this against defn.id to pick the right agent.
+                account_id=agent_id,
+                parts=[TextPart(content=input_text)],
+                user_id=run_id,
+                metadata={"acp_session_id": session_id, "run_id": run_id},
+            )
+            await self.receive(incoming)
+
+            try:
+                while True:
+                    chunk = await asyncio.wait_for(queue.get(), timeout=120.0)
+                    if chunk is None:
+                        break
+                    yield chunk
+            except asyncio.TimeoutError:
+                logger.warning(f"ACP run {run_id} (agent={agent_id}) timed out waiting for response")
+            finally:
+                self._response_queues.pop(run_id, None)
+        return runner
 
     @property
     def name(self) -> str:
@@ -103,37 +185,3 @@ class ACPChannel(BaseChannel):
 
         return None
 
-    # ------------------------------------------------------------------
-    # Agent runner callback (used by ACPServer)
-    # ------------------------------------------------------------------
-
-    async def _agent_runner(
-        self, input_text: str, session_id: str | None
-    ) -> AsyncIterator[str]:
-        """Bridge: ACP run → IncomingMessage → bus → response chunks."""
-        import uuid
-
-        run_id = session_id or str(uuid.uuid4())
-        queue: asyncio.Queue[str | None] = asyncio.Queue()
-        self._response_queues[run_id] = queue
-
-        incoming = IncomingMessage(
-            channel=self.name,
-            chat_id=run_id,
-            parts=[TextPart(content=input_text)],
-            user_id=run_id,
-            metadata={"acp_session_id": session_id, "run_id": run_id},
-        )
-        await self.receive(incoming)
-
-        # Yield chunks until sentinel
-        try:
-            while True:
-                chunk = await asyncio.wait_for(queue.get(), timeout=120.0)
-                if chunk is None:
-                    break
-                yield chunk
-        except asyncio.TimeoutError:
-            logger.warning(f"ACP run {run_id} timed out waiting for agent response")
-        finally:
-            self._response_queues.pop(run_id, None)

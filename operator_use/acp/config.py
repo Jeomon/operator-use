@@ -13,8 +13,12 @@ class ACPServerConfig:
     agent_id: str = "operator"
     agent_name: str = "Operator"
     agent_description: str = "Operator AI agent accessible via ACP"
-    # Optional bearer token to protect the server endpoint
+    # Global bearer token — grants access to ALL agents (fallback when per_agent_tokens is empty)
     auth_token: str = ""
+    # Per-agent bearer tokens: {agent_id: token}
+    # When populated, each token unlocks only its own agent — callers cannot see or reach other agents.
+    # Takes precedence over auth_token when non-empty.
+    per_agent_tokens: dict = field(default_factory=dict)
     # --- ACP Provenance (Ed25519 signatures) ---
     # Sign all responses with this agent's private key
     sign_responses: bool = False

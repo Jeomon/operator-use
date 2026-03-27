@@ -415,22 +415,8 @@ async def main():
         stdio_channel = ACPStdioChannel(config=stdio_cfg, bus=bus)
         gateway.add_channel(stdio_channel)
 
-    # Add ACP server channel if enabled in config
     acp_server_cfg = config.acp_server
     acp_server_enabled = acp_server_cfg.enabled
-    if acp_server_enabled:
-        acp_srv_config = ACPServerConfig(
-            enabled=True,
-            host=acp_server_cfg.host,
-            port=acp_server_cfg.port,
-            agent_id=acp_server_cfg.agent_id,
-            agent_name=acp_server_cfg.agent_name,
-            agent_description=acp_server_cfg.agent_description,
-            auth_token=acp_server_cfg.auth_token,
-            public_url=acp_server_cfg.public_url,
-        )
-        acp_channel = ACPChannel(config=acp_srv_config, bus=bus)
-        gateway.add_channel(acp_channel)
 
     any_channel_active = (
         any(
@@ -487,6 +473,29 @@ async def main():
 
     image_provider = _make_image(config)
     agents = _build_agents(config, cron=cron, gateway=gateway, bus=bus, image=image_provider)
+
+    # Add ACP server channel after agents are built so all agents are discoverable
+    if acp_server_enabled:
+        # Build per-agent token map from agent definitions that have acp_token set.
+        # When any agent has a token, per-agent auth is used and global auth_token is ignored.
+        per_agent_tokens = {
+            defn.id: defn.acp_token
+            for defn in config.agents.list
+            if defn.acp_token
+        }
+        acp_srv_config = ACPServerConfig(
+            enabled=True,
+            host=acp_server_cfg.host,
+            port=acp_server_cfg.port,
+            agent_id=acp_server_cfg.agent_id,
+            agent_name=acp_server_cfg.agent_name,
+            agent_description=acp_server_cfg.agent_description,
+            auth_token=acp_server_cfg.auth_token,
+            per_agent_tokens=per_agent_tokens,
+            public_url=acp_server_cfg.public_url,
+        )
+        acp_channel = ACPChannel(config=acp_srv_config, bus=bus, agents=agents)
+        gateway.add_channel(acp_channel)
 
     async def _graceful_restart() -> None:
         """Cancel all running asyncio tasks so main()'s finally block can run cleanly."""

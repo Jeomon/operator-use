@@ -187,6 +187,7 @@ class AgentDefinition(Base):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)  # Tool profile + allow/deny
     prompt_mode: str = "full"   # Prompt mode: "full", "minimal", or "none"
     system_prompt: str = ""     # Freeform instructions appended to every system prompt call
+    acp_token: str = ""         # If set, this agent is only accessible via ACP with this token
 
 
 class AgentsConfig(Base):
