@@ -476,7 +476,9 @@ class Agent:
                                 iteration=iteration,
                             ),
                         )
-                        await publish_stream(content, True, init=not stream_init_sent)
+                        if not stream_init_sent:
+                            await publish_stream(content, False, init=True)
+                        await publish_stream(content, True, init=False)
                         msg = AIMessage(content=content, thinking=thinking, thinking_signature=thinking_signature)
                         session.add_message(msg)
                         return msg

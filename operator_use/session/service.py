@@ -41,8 +41,10 @@ class SessionStore:
                     continue
                 obj = json.loads(line.strip())
                 if obj.get("type") == "metadata":
-                    created_at = datetime.fromisoformat(obj.get("created_at", "")) or created_at
-                    updated_at = datetime.fromisoformat(obj.get("updated_at", "")) or updated_at
+                    if ts := obj.get("created_at"):
+                        created_at = datetime.fromisoformat(ts)
+                    if ts := obj.get("updated_at"):
+                        updated_at = datetime.fromisoformat(ts)
                     metadata = obj.get("metadata", {})
                     continue
                 if "role" in obj:

@@ -957,7 +957,7 @@ def run_initial_setup():
                                 )
 
                             else:
-                                matched = next((n for n in acp_agents if sub.startswith(n)), None)
+                                matched = next((n for n in acp_agents if sub.startswith(n + "  ")), None)
                                 if matched and confirm(f"Remove agent '{matched}'?"):
                                     del acp_agents[matched]
                         except BackRequest:
