@@ -7,25 +7,31 @@ import sys
 import os
 import signal
 
-BLOCKED_COMMANDS = {
-    "rm -rf /",
-    "rm -rf ~",
-    "rm -rf /*",
-    "dd if=/dev/zero",
-    "dd if=/dev/random",
-    "mkfs",
-    "fdisk",
-    "parted",
-    ":(){:|:&};:",
-    "chmod 777 /",
-    "chmod -R 777",
-    "shutdown",
-    "reboot",
-    "halt",
-    "poweroff",
-    "init 0",
-    "init 6",
+# Commands allowed by default. Deployments can extend via config:
+# "terminal": {"extra_allowed_commands": ["make", "cargo"]}
+_DEFAULT_ALLOWED = {
+    "git", "ls", "cat", "head", "tail", "grep", "find", "echo", "pwd",
+    "mkdir", "cp", "mv", "touch", "wc", "sort", "uniq", "cut", "tr",
+    "pip", "pip3", "uv", "npm", "node", "npx", "yarn", "bun",
+    "python", "python3", "pytest", "ruff", "mypy",
+    "cargo", "go", "rustc",
+    "curl", "wget",
+    "docker", "kubectl",
+    "env", "printenv", "which", "type", "man",
+    "tar", "gzip", "gunzip", "zip", "unzip",
+    "jq", "yq", "sed", "awk",
+    "ssh", "scp", "rsync",
 }
+
+# Patterns that indicate shell escape — always blocked regardless of base command
+_SHELL_ESCAPE_PATTERNS = [
+    "| bash", "| sh", "| zsh", "| fish",
+    "|bash", "|sh", "|zsh",
+    "$(", "`",
+    "&& bash", "&& sh",
+]
+
+_SUBCOMMAND_BLOCKLIST = {"eval", "exec", "source"}
 
 
 class Terminal(BaseModel):
@@ -44,24 +50,55 @@ class Terminal(BaseModel):
     )
 
 
-def _is_command_blocked(cmd: str) -> str | None:
-    """Return blocked pattern if cmd matches, else None."""
-    normalized = " ".join(cmd.strip().split())
-    for blocked in BLOCKED_COMMANDS:
-        if blocked in normalized:
-            return blocked
-    return None
+def _get_base_command(cmd: str) -> str:
+    """Extract the base command name from a shell command string."""
+    stripped = cmd.strip()
+    if not stripped:
+        return ""
+    # Handle /usr/bin/git -> git, ./script.sh -> script.sh
+    first_token = stripped.split()[0]
+    return Path(first_token).name
+
+
+def _is_command_allowed(cmd: str, extra_allowed: set[str] | None = None) -> tuple[bool, str]:
+    """
+    Returns (allowed: bool, reason: str).
+    Checks shell escape patterns first, then base command allowlist.
+    """
+    # Check shell escape patterns
+    cmd_lower = cmd.lower()
+    for pattern in _SHELL_ESCAPE_PATTERNS:
+        if pattern in cmd_lower:
+            return False, f"Shell escape blocked: {pattern!r} in command"
+
+    # Check for dangerous subcommands
+    tokens = cmd_lower.split()
+    for token in tokens[1:]:  # skip base command
+        clean = token.strip(";&|")
+        if clean in _SUBCOMMAND_BLOCKLIST:
+            return False, f"Subcommand blocked: {clean!r}"
+
+    # Check base command against allowlist
+    base = _get_base_command(cmd)
+    if not base:
+        return False, "Empty command"
+
+    allowed = _DEFAULT_ALLOWED | (extra_allowed or set())
+    if base not in allowed:
+        return False, f"Command not in allowlist: {base!r}. Add to terminal.extra_allowed_commands in config if needed."
+
+    return True, ""
 
 
 @Tool(
     name="terminal",
-    description="Run a shell command and return stdout, stderr, and exit code. Use for git, package installs, running scripts, checking processes, or any CLI task. CWD is the workspace root — use the same paths as write_file/list_dir (e.g. 'python temp/script.py'). Destructive commands (rm -rf /, format, shutdown, etc.) are blocked. For long outputs, results are truncated — pipe through head/tail if needed.",
+    description="Run a shell command and return stdout, stderr, and exit code. Use for git, package installs, running scripts, checking processes, or any CLI task. CWD is the workspace root — use the same paths as write_file/list_dir (e.g. 'python temp/script.py'). Commands not in the allowlist are blocked. For long outputs, results are truncated — pipe through head/tail if needed.",
     model=Terminal,
 )
 async def terminal(cmd: str, timeout: int = 10, cwd: str | None = None, **kwargs) -> str:
-    blocked = _is_command_blocked(cmd)
-    if blocked:
-        return ToolResult.error_result(f"Command blocked: contains forbidden pattern '{blocked}'")
+    allowed, reason = _is_command_allowed(cmd)
+    if not allowed:
+        return ToolResult.error_result(reason)
 
     env = os.environ.copy()
 
