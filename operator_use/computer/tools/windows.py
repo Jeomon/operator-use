@@ -2,10 +2,13 @@
 
 import asyncio
 import json
+import logging
 from typing import Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 from operator_use.tools import Tool, ToolResult
 from operator_use.computer.windows import uia, vdm
+
+logger = logging.getLogger(__name__)
 
 
 KEY_ALIASES = {
@@ -199,6 +202,18 @@ async def computer(
             if clicks == 0:
                 uia.SetCursorPos(x, y)
                 return ToolResult.success_result(f"Moved cursor to ({x},{y}).")
+            # Cursorless path: only for left single clicks
+            if button == "left" and clicks == 1:
+                try:
+                    control = uia.ControlFromPoint(x, y)
+                    if control is not None:
+                        invoke = control.GetPattern(uia.PatternId.InvokePattern)
+                        if invoke is not None:
+                            invoke.Invoke()
+                            return ToolResult.success_result(f"Single left clicked at ({x},{y}).")
+                except Exception:
+                    logger.debug("Cursorless click failed at (%s,%s), falling back to coordinates", x, y, exc_info=True)
+            # Coordinate fallback
             match button:
                 case "left":
                     if clicks >= 2:
