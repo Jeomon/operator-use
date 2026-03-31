@@ -142,3 +142,76 @@ def test_get_pattern_exception_falls_back(mock_uia):
 
     mock_uia.Click.assert_called_once_with(100, 200)
     assert result.success
+
+
+# --- Cursorless type tests ---
+
+
+def test_type_uses_value_pattern_when_supported(mock_uia, mock_vdm):
+    """Type should use ValuePattern.SetValue and NOT call uia.Click."""
+    from operator_use.computer.tools.windows import computer
+
+    control = MagicMock()
+    mock_uia.ControlFromPoint.return_value = control
+
+    value_pattern = MagicMock()
+    value_pattern.IsReadOnly = False
+    control.GetPattern.return_value = value_pattern
+
+    result = run(computer.ainvoke(action="type", loc=[100, 200], text="hello"))
+
+    value_pattern.SetValue.assert_called_once_with("hello")
+    mock_uia.Click.assert_not_called()
+    assert result.success
+
+
+def test_type_falls_back_when_caret_position_not_idle(mock_uia, mock_vdm):
+    """Type falls back to coordinates when caret_position is not idle."""
+    from operator_use.computer.tools.windows import computer
+
+    control = MagicMock()
+    mock_uia.ControlFromPoint.return_value = control
+    value_pattern = MagicMock()
+    value_pattern.IsReadOnly = False
+    control.GetPattern.return_value = value_pattern
+
+    result = run(computer.ainvoke(action="type", loc=[100, 200], text="hello", caret_position="end"))
+
+    value_pattern.SetValue.assert_not_called()
+    mock_uia.Click.assert_called()
+    assert result.success
+
+
+def test_type_falls_back_when_value_pattern_is_read_only(mock_uia, mock_vdm):
+    """Type falls back to coordinates when ValuePattern is ReadOnly."""
+    from operator_use.computer.tools.windows import computer
+
+    control = MagicMock()
+    mock_uia.ControlFromPoint.return_value = control
+    value_pattern = MagicMock()
+    value_pattern.IsReadOnly = True
+    control.GetPattern.return_value = value_pattern
+
+    result = run(computer.ainvoke(action="type", loc=[100, 200], text="hello"))
+
+    value_pattern.SetValue.assert_not_called()
+    mock_uia.Click.assert_called()
+    assert result.success
+
+
+def test_type_press_enter_after_set_value(mock_uia, mock_vdm):
+    """press_enter after SetValue fires SendKeys Enter."""
+    from operator_use.computer.tools.windows import computer
+
+    control = MagicMock()
+    mock_uia.ControlFromPoint.return_value = control
+    value_pattern = MagicMock()
+    value_pattern.IsReadOnly = False
+    control.GetPattern.return_value = value_pattern
+
+    result = run(computer.ainvoke(action="type", loc=[100, 200], text="hello", press_enter=True))
+
+    value_pattern.SetValue.assert_called_once_with("hello")
+    mock_uia.SendKeys.assert_called_with("{Enter}", waitTime=0.05)
+    mock_uia.Click.assert_not_called()
+    assert result.success
