@@ -2,11 +2,15 @@
 
 import asyncio
 import json
+import logging
 from typing import Literal, Optional
+
 from pydantic import BaseModel, Field, model_validator
 from operator_use.tools import Tool, ToolResult
 from operator_use.computer.macos import ax
 from operator_use.computer.macos.ax import patterns as ax_patterns
+
+logger = logging.getLogger(__name__)
 
 
 KEY_ALIASES = {
@@ -203,10 +207,12 @@ async def computer(
                 try:
                     element = ax.ElementAtPosition(ax.GetRootControl(), x, y)
                     if element and ax_patterns.InvokePattern.IsSupported(element):
-                        if ax_patterns.InvokePattern(element).Invoke():
+                        invoke = ax_patterns.InvokePattern(element)
+                        if invoke.Invoke():
                             return ToolResult.success_result(f"Single left clicked at ({x},{y}).")
+                        logger.debug("InvokePattern.Invoke() returned False at (%s,%s), falling back", x, y)
                 except Exception:
-                    pass
+                    logger.debug("Cursorless click failed at (%s,%s), falling back to coordinates", x, y, exc_info=True)
             # Coordinate fallback
             ax.MoveTo(x, y)
             await asyncio.sleep(0.05)

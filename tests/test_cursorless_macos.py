@@ -1,8 +1,21 @@
 """Tests for cursorless click path in the macOS computer tool."""
 
-import pytest  # ty: ignore[unresolved-import]
+import sys
 from unittest.mock import MagicMock
-import asyncio
+
+# Stub out macOS-only native modules so tests run on any platform / in CI
+for _mod in [
+    "Quartz", "Quartz.CoreGraphics",
+    "ApplicationServices",
+    "CoreFoundation",
+    "Cocoa",
+    "objc",
+]:
+    sys.modules.setdefault(_mod, MagicMock())
+
+import asyncio  # noqa: E402
+
+import pytest  # noqa: E402  # ty: ignore[unresolved-import]
 
 
 @pytest.fixture(autouse=True)
@@ -91,6 +104,22 @@ def test_double_click_always_uses_coordinates(mock_ax, mock_ax_patterns):
 
     mock_ax_patterns.InvokePattern.IsSupported.assert_not_called()
     mock_ax.DoubleClick.assert_called_once_with(100, 200)
+    assert result.success
+
+
+def test_click_falls_back_when_invoke_returns_false(mock_ax, mock_ax_patterns):
+    """When Invoke() returns False, fall back to coordinate click."""
+    from operator_use.computer.tools.macos import computer
+
+    element = MagicMock()
+    mock_ax.ElementAtPosition.return_value = element
+    mock_ax.GetRootControl.return_value = MagicMock()
+    mock_ax_patterns.InvokePattern.IsSupported.return_value = True
+    mock_ax_patterns.InvokePattern.return_value.Invoke.return_value = False
+
+    result = run(computer.ainvoke(action="click", loc=[100, 200]))
+
+    mock_ax.Click.assert_called_once_with(100, 200)
     assert result.success
 
 
