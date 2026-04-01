@@ -124,6 +124,18 @@ class SearchConfig(Base):
     api_key: Optional[str] = None    # required for exa and tavily
 
 
+class MCPServerConfig(Base):
+    """Configuration for a single MCP server connection."""
+
+    name: str
+    transport: str = "stdio"           # "stdio" | "http" | "sse"
+    command: Optional[str] = None      # For stdio: executable path (e.g. "npx", "uvx", "python")
+    args: List[str] = Field(default_factory=list)   # CLI args for stdio subprocess
+    url: Optional[str] = None          # For http/sse transport
+    env: Dict[str, str] = Field(default_factory=dict)  # Extra env vars for subprocess
+    auth_token: Optional[str] = None   # Bearer token for HTTP auth header
+
+
 class PeerMatch(Base):
     """Match a specific chat/channel/group within a platform."""
 
@@ -279,6 +291,8 @@ class Config(BaseSettings):
     acp_agents: Dict[str, ACPAgentEntry] = Field(default_factory=dict)
     # ACP server — exposes this Operator instance as an ACP agent on the network.
     acp_server: ACPServerSettings = Field(default_factory=ACPServerSettings)
+    # MCP (Model Context Protocol) server configurations for runtime connection.
+    mcp_servers: Dict[str, MCPServerConfig] = Field(default_factory=dict)
 
     model_config = SettingsConfigDict(
         env_prefix="OPERATOR_",

@@ -297,6 +297,12 @@ def _build_agents(config: Config, cron, gateway, bus, image=None, search=None) -
     for agent in agents.values():
         agent.tool_register.set_extension("_agent_registry", agents)
 
+    # Wire MCP manager per agent
+    from operator_use.mcp import MCPManager
+    for agent in agents.values():
+        mcp_manager = MCPManager(list(config.mcp_servers.values()))
+        agent.tool_register.set_extension("_mcp_manager", mcp_manager)
+
     return agents
 
 
