@@ -40,6 +40,7 @@ def help_cmd(ctx: typer.Context):
     table.add_row("operator agent", "Chat with first agent")
     table.add_row("operator agent <name>", "Chat with a specific agent  [dim](e.g., operator agent jarvis)[/dim]")
     table.add_row("operator agent <name> -v", "Chat with agent in verbose mode")
+    table.add_row("operator agent <name> -s <id>", "Resume a session by ID  [dim](--session / -s)[/dim]")
     table.add_row("operator onboard", "Interactive setup wizard")
     table.add_row("operator agents list", "List all configured agents")
     table.add_row("operator agents add <id>", "Add a new agent  [dim](--provider / --model / --workspace)[/dim]")
@@ -975,7 +976,8 @@ def agent_repl(
         default_agent=defn.id,
     )
 
-    chat_id = session or f"cli-{defn.id}"
+    import uuid as _uuid
+    chat_id = session or f"cli_{_uuid.uuid4().hex[:8]}"
     llm_conf = defn.llm_config
     llm_label = f"{llm_conf.provider} / {llm_conf.model}" if llm_conf else "not configured"
     agent_label = f"[dim]{defn.id}[/dim]  " if len(agents) > 1 or agent_id else ""
@@ -998,7 +1000,7 @@ def agent_repl(
 
             async def stream_chunk(content: str, is_done: bool, init: bool = False) -> None:
                 if init and not state["started"]:
-                    console.print("\n[bold cyan]Agent:[/bold cyan] ", end="")
+                    console.print(f"\n[bold cyan]{defn.id.title()}:[/bold cyan] ", end="")
                     state["started"] = True
                 delta = content[state["printed"]:]
                 if delta:
@@ -1024,19 +1026,19 @@ def agent_repl(
                         else:
                             console.print(f"\nSession{name_label} started.\n")
                             from operator_use.orchestrator.commands import _HELP_TEXT
-                            console.print(_HELP_TEXT)
+                            console.print(_HELP_TEXT, highlight=False, markup=False)
                             chat_id = target_session_id
                     elif command == "stop":
                         agent.sessions.archive(chat_id)
                         console.print("\nSession saved and closed.\nUse /start to begin a new session.\n")
-                        chat_id = f"cli-{defn.id}"
+                        chat_id = f"cli_{_uuid.uuid4().hex[:8]}"
                     elif command == "restart":
                         console.print("\nRestarting system. I'll be back in a moment.\n")
                         import os
                         os._exit(75)
                     elif command == "help":
                         from operator_use.orchestrator.commands import _HELP_TEXT
-                        console.print(f"\n{_HELP_TEXT}\n")
+                        console.print(f"\n{_HELP_TEXT}\n", highlight=False, markup=False)
                     else:
                         console.print(f"\n[yellow]Unknown command:[/yellow] /{command}\n")
                 else:
