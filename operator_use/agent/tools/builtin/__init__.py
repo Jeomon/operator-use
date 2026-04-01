@@ -28,10 +28,17 @@ NON_AGENT_TOOLS = MESSAGE_TOOLS + CHANNEL_TOOLS
 
 ALL_TOOLS = AGENT_TOOLS + NON_AGENT_TOOLS
 
+# CLI profile — tools that work in a terminal session (no channels, no gateway)
+CLI_TOOLS = FILESYSTEM_TOOLS + WEB_TOOLS + TERMINAL_TOOLS + PROCESS_TOOLS
+
+MINIMAL_TOOLS = FILESYSTEM_TOOLS + WEB_TOOLS
+
+CODING_TOOLS = FILESYSTEM_TOOLS + WEB_TOOLS + TERMINAL_TOOLS
+
 # Tool profiles — base presets for per-agent tool configuration
 TOOL_PROFILES: dict[str, list] = {
-    "minimal": FILESYSTEM_TOOLS + WEB_TOOLS,
-    "coding":  FILESYSTEM_TOOLS + WEB_TOOLS + TERMINAL_TOOLS,
+    "minimal": MINIMAL_TOOLS,
+    "coding":  CODING_TOOLS,
     "full":    ALL_TOOLS,
 }
 

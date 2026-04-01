@@ -947,6 +947,17 @@ def agent_repl(
         console.print(f"[red]Failed to initialize agent '{defn.id}'.[/red]")
         raise typer.Exit(1)
 
+    # Restrict to CLI-appropriate tools (no channel, messaging, cron, or multi-agent tools)
+    from operator_use.agent.tools.builtin import CLI_TOOLS
+    from operator_use.agent.tools.registry import ToolRegistry
+    agent.tool_register = ToolRegistry()
+    agent.tool_register.register_tools(CLI_TOOLS)
+    # Re-inject runtime extensions
+    agent.tool_register.set_extension("_agent", agent)
+    agent.tool_register.set_extension("_agent_id", defn.id)
+    agent.tool_register.set_extension("_bus", bus)
+    agent.tool_register.set_extension("_agent_registry", agents)
+
     # Add tool call hook for verbose mode
     if verbose:
         from operator_use.agent.hooks.events import HookEvent
