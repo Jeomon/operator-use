@@ -154,11 +154,13 @@ async def browser_task(task: str, keep_open: bool = True, use_user_session: bool
                     logger.info("[browser_task] iter=%d tool=%s params=%s", iteration, tc.name, tc.params)
                     tr = await registry.aexecute(tc.name, tc.params)
                     logger.info("[browser_task] iter=%d result=%s", iteration, tr.output if tr.success else f"ERROR: {tr.error}")
+                    thinking_signature = event.thinking.signature if event.thinking else None
                     history.append(ToolMessage(
                         id=tc.id,
                         name=tc.name,
                         params=tc.params,
                         content=tr.output if tr.success else tr.error,
+                        thinking_signature=thinking_signature,
                     ))
                 case LLMEventType.TEXT:
                     result = event.content or "(no result)"
