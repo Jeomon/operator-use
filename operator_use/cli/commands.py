@@ -37,7 +37,9 @@ def help_cmd(ctx: typer.Context):
     table.add_row("operator", "Start the agent (default)")
     table.add_row("operator -v / --verbose", "Start the agent and show logs in console")
     table.add_row("operator gateway", "Start the agent with gateway channels")
-    table.add_row("operator agent", "Chat directly with the agent in the terminal")
+    table.add_row("operator agent", "Chat with first agent")
+    table.add_row("operator agent <name>", "Chat with a specific agent  [dim](e.g., operator agent jarvis)[/dim]")
+    table.add_row("operator agent <name> -v", "Chat with agent in verbose mode")
     table.add_row("operator onboard", "Interactive setup wizard")
     table.add_row("operator agents list", "List all configured agents")
     table.add_row("operator agents add <id>", "Add a new agent  [dim](--provider / --model / --workspace)[/dim]")
@@ -886,11 +888,18 @@ def auth_codex():
 
 @app.command("agent")
 def agent_repl(
+    agent_name: str = typer.Argument("", help="Agent name to chat with (optional, uses first agent if not specified)."),
     session: str = typer.Option("", "--session", "-s", help="Session ID to resume (default: new session per run)."),
-    agent_id: str = typer.Option("", "--agent", "-a", help="Agent ID to use (default: first agent in config)."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show tool calls and logs in console"),
 ):
-    """Chat directly with the agent in the terminal (no gateway required)."""
+    """Chat directly with the agent in the terminal (no gateway required).
+
+    Usage:
+        operator agent                  # Chat with first agent
+        operator agent jarvis           # Chat with 'jarvis' agent
+        operator agent claude -v        # Chat with 'claude' agent (verbose mode)
+    """
+    agent_id = agent_name  # Use the positional argument as agent_id
     from operator_use.cli.start import (
         _build_agents, _make_stt, _make_tts, _make_search, _make_image,
         copy_templates_to_workspace, _resolve_agent_workspace, setup_logging,
@@ -963,6 +972,7 @@ def agent_repl(
     console.print("[dim]Type your message and press Enter. Ctrl+C or Ctrl+D to exit.[/dim]\n")
 
     async def _run():
+        nonlocal chat_id
         while True:
             try:
                 user_input = await asyncio.get_event_loop().run_in_executor(None, lambda: input("You: "))
@@ -987,12 +997,44 @@ def agent_repl(
                     console.print("\n")
 
             try:
-                await orchestrator.process_direct(
-                    content=user_input, channel="cli", chat_id=chat_id,
-                    publish_stream=stream_chunk,
-                )
-                if not state["started"]:
-                    console.print()
+                # Parse slash commands
+                if user_input.startswith("/"):
+                    parts = user_input.split(None, 1)
+                    command = parts[0][1:].lower()
+                    args = parts[1] if len(parts) > 1 else ""
+
+                    if command == "start":
+                        session_name = args.strip() or None
+                        target_session_id = f"{chat_id}:{session_name}" if session_name else chat_id
+                        existing = agent.sessions.load(target_session_id)
+                        name_label = f" '{session_name}'" if session_name else ""
+                        if existing and existing.messages:
+                            console.print(f"\nSession{name_label} is already active. Use /stop to end it first.\n")
+                        else:
+                            console.print(f"\nSession{name_label} started.\n")
+                            from operator_use.orchestrator.commands import _HELP_TEXT
+                            console.print(_HELP_TEXT)
+                            chat_id = target_session_id
+                    elif command == "stop":
+                        agent.sessions.archive(chat_id)
+                        console.print("\nSession saved and closed.\nUse /start to begin a new session.\n")
+                        chat_id = f"cli-{defn.id}"
+                    elif command == "restart":
+                        console.print("\nRestarting system. I'll be back in a moment.\n")
+                        import os
+                        os._exit(75)
+                    elif command == "help":
+                        from operator_use.orchestrator.commands import _HELP_TEXT
+                        console.print(f"\n{_HELP_TEXT}\n")
+                    else:
+                        console.print(f"\n[yellow]Unknown command:[/yellow] /{command}\n")
+                else:
+                    await orchestrator.process_direct(
+                        content=user_input, channel="cli", chat_id=chat_id,
+                        publish_stream=stream_chunk,
+                    )
+                    if not state["started"]:
+                        console.print()
             except Exception as e:
                 console.print(f"\n[red]Error:[/red] {e}")
 
