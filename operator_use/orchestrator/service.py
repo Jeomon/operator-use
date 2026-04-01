@@ -8,7 +8,7 @@ import re
 import tempfile
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from operator_use.bus import Bus, IncomingMessage, OutgoingMessage, StreamPhase
 from operator_use.bus.views import AudioPart, ContentPart, FilePart, ImagePart, TextPart, text_from_parts
@@ -336,6 +336,7 @@ class Orchestrator:
         content: str,
         channel: str = "cli",
         chat_id: str = "direct",
+        publish_stream: "Callable[..., Awaitable[None]] | None" = None,
     ) -> str:
         """Process a message directly without going through the bus (heartbeat, REPL)."""
         message = IncomingMessage(
@@ -351,7 +352,7 @@ class Orchestrator:
             message=built_message,
             session_id=session_id,
             incoming=message,
-            publish_stream=None,
+            publish_stream=publish_stream,
             pending_replies=self._pending_replies,
         )
         return response.content or ""

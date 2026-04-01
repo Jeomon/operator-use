@@ -887,14 +887,16 @@ def auth_codex():
 @app.command("agent")
 def agent_repl(
     session: str = typer.Option("", "--session", "-s", help="Session ID to resume (default: new session per run)."),
+    agent_id: str = typer.Option("", "--agent", "-a", help="Agent ID to use (default: first agent in config)."),
 ):
     """Chat directly with the agent in the terminal (no gateway required)."""
-    from operator_use.cli.start import _make_models, copy_templates_to_workspace
+    from operator_use.cli.start import (
+        _build_agents, _make_stt, _make_tts, _make_search, _make_image,
+        copy_templates_to_workspace, _resolve_agent_workspace, setup_logging,
+    )
     from operator_use.config import load_config
     from operator_use.bus import Bus
-    from operator_use.agent import Agent
     from operator_use.orchestrator import Orchestrator
-    from operator_use.agent.tools.builtin import NON_AGENT_TOOLS
     from operator_use.crons import Cron
 
     config_path = USERDATA_DIR / "config.json"
@@ -902,44 +904,52 @@ def agent_repl(
         console.print("[red]No config found.[/red] Run [bold]operator onboard[/bold] first.")
         raise typer.Exit(1)
 
+    setup_logging(USERDATA_DIR)
     config = load_config(USERDATA_DIR)
     if not config.agents.list:
         console.print("[red]No agents defined in config.[/red] Run [bold]operator onboard[/bold] first.")
         raise typer.Exit(1)
 
-    from operator_use.cli.start import _resolve_agent_workspace
-    first_defn = config.agents.list[0]
-    workspace = _resolve_agent_workspace(first_defn)
-    copy_templates_to_workspace(USERDATA_DIR, workspace=workspace)
+    # Resolve target agent definition
+    if agent_id:
+        defn = next((d for d in config.agents.list if d.id == agent_id), None)
+        if defn is None:
+            ids = ", ".join(d.id for d in config.agents.list)
+            console.print(f"[red]Agent '{agent_id}' not found.[/red] Available: {ids}")
+            raise typer.Exit(1)
+    else:
+        defn = config.agents.list[0]
 
-    llm, stt, tts = _make_models(config)
-    if not llm:
-        console.print("[red]No LLM configured.[/red] Run [bold]operator onboard[/bold] first.")
-        raise typer.Exit(1)
+    workspace = _resolve_agent_workspace(defn)
+    copy_templates_to_workspace(USERDATA_DIR, workspace=workspace)
 
     bus = Bus()
     cron_store = USERDATA_DIR / "crons.json"
     cron = Cron(store_path=cron_store)
-    agent = Agent(
-        llm=llm,
-        workspace=workspace,
-        cron=cron,
-        bus=bus,
-        max_iterations=config.agents.defaults.max_tool_iterations,
-        exclude_tools=NON_AGENT_TOOLS,
-        acp_registry=config.acp_agents,
-    )
+    image = _make_image(config)
+    search = _make_search(config)
+    stt = _make_stt(config)
+    tts = _make_tts(config)
+
+    agents = _build_agents(config, cron=cron, gateway=None, bus=bus, image=image, search=search)
+    agent = agents.get(defn.id)
+    if agent is None:
+        console.print(f"[red]Failed to initialize agent '{defn.id}'.[/red]")
+        raise typer.Exit(1)
+
     orchestrator = Orchestrator(
         bus=bus,
-        agents={first_defn.id: agent},
+        agents=agents,
         stt=stt,
         tts=tts,
+        default_agent=defn.id,
     )
 
-    chat_id = session or "agent-repl"
-    llm_conf = first_defn.llm_config
+    chat_id = session or f"cli-{defn.id}"
+    llm_conf = defn.llm_config
     llm_label = f"{llm_conf.provider} / {llm_conf.model}" if llm_conf else "not configured"
-    console.print(f"\n[bold]Operator Agent[/bold]  [dim]{llm_label}[/dim]  [dim](session: {chat_id})[/dim]")
+    agent_label = f"[dim]{defn.id}[/dim]  " if len(agents) > 1 or agent_id else ""
+    console.print(f"\n[bold]Operator Agent[/bold]  {agent_label}[dim]{llm_label}[/dim]  [dim](session: {chat_id})[/dim]")
     console.print("[dim]Type your message and press Enter. Ctrl+C or Ctrl+D to exit.[/dim]\n")
 
     async def _run():
@@ -952,11 +962,29 @@ def agent_repl(
             user_input = user_input.strip()
             if not user_input:
                 continue
+
+            state = {"printed": 0, "started": False}
+
+            async def stream_chunk(content: str, is_done: bool, init: bool = False) -> None:
+                if init and not state["started"]:
+                    console.print("\n[bold cyan]Agent:[/bold cyan] ", end="")
+                    state["started"] = True
+                delta = content[state["printed"]:]
+                if delta:
+                    console.print(delta, end="", highlight=False)
+                    state["printed"] = len(content)
+                if is_done:
+                    console.print("\n")
+
             try:
-                response = await orchestrator.process_direct(content=user_input, channel="cli", chat_id=chat_id)
-                console.print(f"\n[bold cyan]Agent:[/bold cyan] {response}\n")
+                await orchestrator.process_direct(
+                    content=user_input, channel="cli", chat_id=chat_id,
+                    publish_stream=stream_chunk,
+                )
+                if not state["started"]:
+                    console.print()
             except Exception as e:
-                console.print(f"[red]Error:[/red] {e}")
+                console.print(f"\n[red]Error:[/red] {e}")
 
     try:
         asyncio.run(_run())

@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from operator_use.cli.tui import BackRequest, clear_screen, print_banner, print_start, print_step, select, text_input, confirm, print_end, print_end_first_install, console
+from operator_use.cli.tui import BackRequest, NavigateBack, clear_screen, print_banner, print_start, print_step, select, text_input, confirm, print_end, print_end_first_install, console
 
 # --- Registry Data ---
 
@@ -1071,7 +1071,7 @@ def run_initial_setup():
                     console.print("│  [red]All agents must have an LLM configured.[/red] Go to Agents to set one.")
                     continue
                 break
-        except BackRequest:
+        except (BackRequest, NavigateBack):
             continue
 
     # --- Build and save config ---
