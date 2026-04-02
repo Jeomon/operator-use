@@ -12,6 +12,7 @@ from operator_use.agent.tools.builtin.local_agents import localagents
 from operator_use.agent.tools.builtin.control_center import control_center
 from operator_use.agent.tools.builtin.imagegen import imagegen
 from operator_use.agent.tools.builtin.mcp import mcp as mcp_tool
+from operator_use.agent.tools.builtin.skill import skill
 
 FILESYSTEM_TOOLS = [read_file,write_file,edit_file,list_dir,patch_file]
 WEB_TOOLS = [web_search,web_fetch]
@@ -23,8 +24,9 @@ OTHER_AGENT_TOOLS = [subagents,acpagents,localagents]
 CHANNEL_TOOLS = [channel]
 IMAGE_TOOLS = [imagegen]
 MCP_TOOLS = [mcp_tool]
+SKILL_TOOLS = [skill]
 
-AGENT_TOOLS = FILESYSTEM_TOOLS + WEB_TOOLS + TERMINAL_TOOLS + CRON_TOOLS + PROCESS_TOOLS + OTHER_AGENT_TOOLS + IMAGE_TOOLS + MCP_TOOLS
+AGENT_TOOLS = FILESYSTEM_TOOLS + WEB_TOOLS + TERMINAL_TOOLS + CRON_TOOLS + PROCESS_TOOLS + OTHER_AGENT_TOOLS + IMAGE_TOOLS + MCP_TOOLS + SKILL_TOOLS
 
 NON_AGENT_TOOLS = MESSAGE_TOOLS + CHANNEL_TOOLS
 
