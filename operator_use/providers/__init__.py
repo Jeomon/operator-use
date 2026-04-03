@@ -29,7 +29,7 @@ from operator_use.providers.azure_openai import ChatAzureOpenAI
 from operator_use.providers.vllm import ChatVLLM
 from operator_use.providers.nvidia import ChatNvidia
 from operator_use.providers.deepseek import ChatDeepSeek
-from operator_use.providers.grok import ChatGrok
+from operator_use.providers.xai import ChatXai, TTSXai, ImageXai
 
 try:
     from operator_use.providers.codex import ChatCodex
@@ -77,6 +77,7 @@ from operator_use.providers.google import TTSGoogle
 # Image generation providers
 from operator_use.providers.openai import ImageOpenAI
 from operator_use.providers.google import ImageGoogle
+from operator_use.providers.xai import ImageXai
 
 try:
     from operator_use.providers.together import ImageTogether
@@ -88,6 +89,7 @@ try:
 except ImportError:
     pass
 from operator_use.providers.groq import TTSGroq
+from operator_use.providers.xai import TTSXai
 
 try:
     from operator_use.providers.elevenlabs import TTSElevenLabs
@@ -146,7 +148,7 @@ __all__ = [
     "ChatVLLM",
     "ChatNvidia",
     "ChatDeepSeek",
-    "ChatGrok",
+    "ChatXai",
     "ChatCodex",
     "ChatClaudeCode",
     "ChatAntigravity",
@@ -162,6 +164,7 @@ __all__ = [
     "TTSOpenAI",
     "TTSGoogle",
     "TTSGroq",
+    "TTSXai",
     "TTSElevenLabs",
     "TTSDeepgram",
     "TTSSarvam",
@@ -169,6 +172,7 @@ __all__ = [
     # Image generation providers
     "ImageOpenAI",
     "ImageGoogle",
+    "ImageXai",
     "ImageTogether",
     "ImageFal",
     # Search providers

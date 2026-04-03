@@ -9,7 +9,7 @@ from operator_use.providers.views import Metadata
 XAI_BASE_URL = "https://api.x.ai/v1"
 
 
-class ChatGrok(ChatOpenAI):
+class ChatXai(ChatOpenAI):
     """
     xAI Grok LLM implementation using the OpenAI-compatible client.
 
@@ -57,7 +57,7 @@ class ChatGrok(ChatOpenAI):
 
     @property
     def provider(self) -> str:
-        return "grok"
+        return "xai"
 
     def _is_reasoning_model(self) -> bool:
         return any(p in self._model for p in self.REASONING_PATTERNS)

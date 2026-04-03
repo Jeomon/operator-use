@@ -87,7 +87,7 @@ LLM_CLASS_MAP = {
     "azure_openai": "ChatAzureOpenAI",
     "vllm": "ChatVLLM",
     "deepseek": "ChatDeepSeek",
-    "grok": "ChatGrok",
+    "xai": "ChatXai",
     "codex": "ChatCodex",
     "claude_code": "ChatClaudeCode",
     "antigravity": "ChatAntigravity",
@@ -107,6 +107,7 @@ TTS_CLASS_MAP = {
     "openai": "TTSOpenAI",
     "google": "TTSGoogle",
     "groq": "TTSGroq",
+    "xai": "TTSXai",
     "elevenlabs": "TTSElevenLabs",
     "deepgram": "TTSDeepgram",
     "sarvam": "TTSSarvam",
@@ -115,6 +116,7 @@ TTS_CLASS_MAP = {
 IMAGE_CLASS_MAP = {
     "openai": "ImageOpenAI",
     "google": "ImageGoogle",
+    "xai": "ImageXai",
     "together": "ImageTogether",
     "fal": "ImageFal",
 }

@@ -84,7 +84,7 @@ LLM_PROVIDERS: dict[str, list[tuple[str, str]]] = {
         ("Ministral 8B", "ministral-8b-2512"),
         ("Ministral 3B", "ministral-3b-2512"),
     ],
-    "Grok": [
+    "xAI": [
         ("Grok 4 (recommended)", "grok-4"),
         ("Grok 3", "grok-3"),
         ("Grok 3 Mini (reasoning)", "grok-3-mini"),
@@ -177,6 +177,9 @@ TTS_PROVIDERS: dict[str, list[tuple[str, str]]] = {
     "Groq": [
         ("Orpheus v1 English", "canopylabs/orpheus-v1-english"),
     ],
+    "xAI": [
+        ("Grok TTS (recommended)", "grok-tts"),
+    ],
     "OpenAI": [
         ("TTS-1 HD", "tts-1-hd"),
         ("TTS-1", "tts-1"),
@@ -197,6 +200,10 @@ TTS_PROVIDERS: dict[str, list[tuple[str, str]]] = {
 }
 
 IMAGE_PROVIDERS: dict[str, list[tuple[str, str]]] = {
+    "xAI": [
+        ("Grok Imagine (recommended)", "grok-imagine-image"),
+        ("Grok Imagine Pro", "grok-imagine-image-pro"),
+    ],
     "OpenAI": [
         ("GPT Image 1.5 (recommended, latest)", "gpt-image-1.5"),
         ("GPT Image 1", "gpt-image-1"),
@@ -241,6 +248,7 @@ SEARCH_PROVIDERS: dict[str, str] = {
 
 VOICES: dict[str, list[str]] = {
     "OpenAI": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"],
+    "xAI": ["eve", "ara", "rex", "sal", "leo"],
     "Groq": ["autumn", "diana", "hannah", "austin", "daniel", "troy"],
     "Google": ["Aoede", "Charon", "Fenrir", "Kore", "Puck"],
     "ElevenLabs": ["Rachel", "Drew", "Clyde", "Paul", "Domi"],
@@ -277,6 +285,7 @@ def get_provider_key(name: str) -> str:
         "Sarvam": "sarvam",
         "Claude Code": "claude_code",
         "GitHub Copilot": "github_copilot",
+        "xAI": "xai",
     }
     return key_map.get(name, name.lower())
 
@@ -437,7 +446,7 @@ def _save_config(
         "google":      "GEMINI_API_KEY",
         "nvidia":      "NVIDIA_API_KEY",
         "deepseek":    "DEEPSEEK_API_KEY",
-        "grok":        "XAI_API_KEY",
+        "xai":         "XAI_API_KEY",
         "cerebras":    "CEREBRAS_API_KEY",
         "open_router": "OPENROUTER_API_KEY",
         "elevenlabs":  "ELEVENLABS_API_KEY",
