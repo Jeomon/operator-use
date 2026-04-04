@@ -105,9 +105,11 @@ def _convert_messages(messages: List[BaseMessage]) -> tuple[Optional[str], list]
             model_parts = []
             if msg.thinking:
                 model_parts.append({"thought": True, "text": msg.thinking})
-            # functionCall part - Gemini API does not support thoughtSignature in functionCall
-            function_call = {"name": msg.name, "args": msg.params}
-            model_parts.append({"functionCall": function_call})
+            # functionCall part with thoughtSignature at part level (required by Gemini extended thinking API)
+            fc_part = {"functionCall": {"name": msg.name, "args": msg.params}}
+            if msg.thinking_signature:
+                fc_part["thoughtSignature"] = msg.thinking_signature
+            model_parts.append(fc_part)
             raw_contents.append({"role": "model", "parts": model_parts})
             raw_contents.append({
                 "role": "user",
