@@ -39,9 +39,9 @@ class MCPParams(BaseModel):
     description=(
         "Manage MCP (Model Context Protocol) server connections.\n\n"
         "- action='list'                              → show all configured servers and their status\n"
-        "- action='connect', server_name='github'     → connect and load the server's tools\n"
-        "- action='disconnect', server_name='github'  → disconnect and remove the server's tools\n\n"
-        "When connected, the MCP server's tools are available to you like any built-in tool."
+        "- action='connect', server_name='tavily-mcp' → connect and load the server's tools (added to your LLM context)\n"
+        "- action='disconnect', server_name='tavily-mcp' → disconnect and remove the server's tools (removed from your LLM context)\n\n"
+        "When connected, the MCP server's tools are available to you and included in every LLM call alongside built-in tools."
     ),
     model=MCPParams,
 )
@@ -123,8 +123,10 @@ async def mcp(
                     agent.tool_register.unregister(name)
                 except ValueError:
                     pass  # Already gone — that's fine
-        return ToolResult.success_result(
-            f"Disconnected from '{server_name}'. Removed {len(tool_names)} tool(s)."
-        )
+
+        lines = [f"Disconnected from '{server_name}'. Removed {len(tool_names)} tool(s):"]
+        for name in tool_names:
+            lines.append(f"  • {name}")
+        return ToolResult.success_result("\n".join(lines))
 
     return ToolResult.error_result(f"Unknown action '{action}'")
