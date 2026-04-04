@@ -127,7 +127,7 @@ def _convert_messages(messages: List[BaseMessage]) -> tuple[Optional[str], list]
     return system_instruction, contents
 
 
-_UNSUPPORTED_SCHEMA_KEYS = {"examples", "default", "additionalProperties", "$schema", "$defs"}
+_UNSUPPORTED_SCHEMA_KEYS = {"examples", "default", "additionalProperties", "$schema", "$defs", "const"}
 
 def _clean_schema(obj):
     """Recursively remove keys unsupported by the Gemini function calling schema."""
