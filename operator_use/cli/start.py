@@ -294,7 +294,7 @@ def _build_agents(config: Config, cron, gateway, bus, image=None, search=None) -
             plugins=plugins,
             image=image,
             search=search,
-            mcp_servers=dict(config.mcp_servers),
+            mcp_servers={name: cfg.model_dump() for name, cfg in config.mcp_servers.items()} if config.mcp_servers else None,
         )
 
     for agent in agents.values():

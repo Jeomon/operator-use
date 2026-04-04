@@ -68,8 +68,8 @@ def add_mcp_server(existing: dict) -> Optional[str]:
                 return None
             continue
 
-        # Validate name
-        if not name.replace("_", "").isalnum() or not name.islower():
+        # Validate name: lowercase alphanumeric with - and _ allowed
+        if not name.replace("_", "").replace("-", "").isalnum() or not name.islower():
             console.print("[red]Name must be lowercase alphanumeric (- and _ allowed)[/red]")
             continue
 

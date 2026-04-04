@@ -121,14 +121,23 @@ When you need to remember something, write to {workspace_path}/memory/MEMORY.md
         lines.append("\n### Configured MCP Servers:\n")
 
         for name, config in self.mcp_servers.items():
-            transport = config.get("transport", "unknown")
-            if transport == "stdio":
+            # Handle both dict (legacy) and MCPServerConfig (Pydantic model)
+            if isinstance(config, dict):
+                transport = config.get("transport", "unknown")
                 cmd = config.get("command", "?")
                 args = config.get("args", [])
+                url = config.get("url", "?")
+            else:
+                # MCPServerConfig object - use attribute access
+                transport = config.transport
+                cmd = config.command
+                args = config.args or []
+                url = config.url
+
+            if transport == "stdio":
                 args_str = f" {' '.join(args)}" if args else ""
                 lines.append(f"- **{name}** (stdio): `{cmd}{args_str}`")
             elif transport in ("http", "sse"):
-                url = config.get("url", "?")
                 lines.append(f"- **{name}** ({transport}): `{url}`")
             else:
                 lines.append(f"- **{name}** ({transport})")
