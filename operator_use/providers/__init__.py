@@ -30,6 +30,7 @@ from operator_use.providers.vllm import ChatVLLM
 from operator_use.providers.nvidia import ChatNvidia
 from operator_use.providers.deepseek import ChatDeepSeek
 from operator_use.providers.xai import ChatXai, TTSXai, ImageXai
+from operator_use.providers.zai import ChatZAI
 
 try:
     from operator_use.providers.codex import ChatCodex
@@ -149,6 +150,7 @@ __all__ = [
     "ChatNvidia",
     "ChatDeepSeek",
     "ChatXai",
+    "ChatZAI",
     "ChatCodex",
     "ChatClaudeCode",
     "ChatAntigravity",

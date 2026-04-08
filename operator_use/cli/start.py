@@ -88,6 +88,7 @@ LLM_CLASS_MAP = {
     "vllm": "ChatVLLM",
     "deepseek": "ChatDeepSeek",
     "xai": "ChatXai",
+    "zai": "ChatZAI",
     "codex": "ChatCodex",
     "claude_code": "ChatClaudeCode",
     "antigravity": "ChatAntigravity",
