@@ -75,7 +75,7 @@ class Agent:
         self.agent_id = agent_id
         self.description = description
         if workspace is None:
-            from operator_use.paths import get_named_workspace_dir
+            from operator_use.config.paths import get_named_workspace_dir
             workspace = get_named_workspace_dir("operator")
         self.workspace = workspace
         self.sessions = sessions or SessionStore(workspace=self.workspace)

@@ -21,8 +21,11 @@ from pathlib import Path
 from threading import Thread
 from typing import Optional
 from urllib.parse import parse_qs, urlencode, urlparse
+from dotenv import load_dotenv
 
 import httpx
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 

@@ -380,7 +380,7 @@ def _save_config(
     mcp_servers: dict | None = None,
 ) -> None:
     """Build the Config object and persist it to disk."""
-    from operator_use.paths import get_userdata_dir
+    from operator_use.config.paths import get_userdata_dir
 
     providers = ProvidersConfig()
     for prov, key in api_keys_dict.items():
@@ -565,7 +565,7 @@ def run_initial_setup():
         print_banner()
         print_start("Configure")
 
-    from operator_use.paths import get_userdata_dir
+    from operator_use.config.paths import get_userdata_dir
     _config_path = get_userdata_dir() / "config.json"
 
     # --- Load existing config ---

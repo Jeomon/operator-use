@@ -30,7 +30,7 @@ from operator_use.acp.client import ACPClient
 from operator_use.acp.config import ACPClientConfig
 from operator_use.acp.models import TextMessagePart
 from operator_use.tools import Tool, ToolResult
-from operator_use.paths import get_userdata_dir
+from operator_use.config.paths import get_userdata_dir
 
 
 class ACPAgents(BaseModel):

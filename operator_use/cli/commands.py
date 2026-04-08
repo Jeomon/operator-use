@@ -12,7 +12,7 @@ from rich import box
 
 console = Console()
 
-from operator_use.paths import get_userdata_dir
+from operator_use.config.paths import get_userdata_dir
 USERDATA_DIR = get_userdata_dir()
 
 app = typer.Typer(

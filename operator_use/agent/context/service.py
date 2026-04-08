@@ -32,7 +32,7 @@ class Context:
         self.memory = Memory(self.workspace)
         self.knowledge = Knowledge(self.workspace)
         self.mcp_servers = mcp_servers or {}
-        from operator_use.paths import get_userdata_dir
+        from operator_use.config.paths import get_userdata_dir
         self.interceptor = RestartInterceptor(
             userdata=get_userdata_dir(),
             project_root=self.codebase,

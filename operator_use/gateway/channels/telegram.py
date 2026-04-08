@@ -861,7 +861,7 @@ class TelegramChannel(BaseChannel):
         chat = update.effective_chat
         if chat.type in ("group", "supergroup"):
             try:
-                from operator_use.paths import get_userdata_dir
+                from operator_use.config.paths import get_userdata_dir
                 pending = {
                     "channel": "telegram",
                     "chat_id": str(chat.id),

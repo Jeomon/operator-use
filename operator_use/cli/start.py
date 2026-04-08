@@ -70,7 +70,7 @@ from operator_use.crons.views import CronJob
 from operator_use.crons import Cron
 from operator_use.bus import OutgoingMessage, IncomingMessage, TextPart
 from operator_use.config import Config, load_config, AgentDefinition
-from operator_use.paths import get_named_workspace_dir
+from operator_use.config.paths import get_named_workspace_dir
 from typing import Optional
 from pathlib import Path
 
@@ -445,7 +445,7 @@ async def _build_recovery_message(
 
 
 async def main():
-    from operator_use.paths import get_userdata_dir
+    from operator_use.config.paths import get_userdata_dir
     USERDATA_DIR = get_userdata_dir()
     verbose = os.getenv("OPERATOR_VERBOSE", "").lower() in ("1", "true", "yes")
     setup_logging(USERDATA_DIR, verbose=verbose)
@@ -838,7 +838,7 @@ def _attempt_startup_recovery(exit_code: int) -> bool:
     False otherwise (caller should sys.exit).
     """
     import json as _json
-    from operator_use.paths import get_userdata_dir as _gud
+    from operator_use.config.paths import get_userdata_dir as _gud
     from operator_use.interceptor import revert_session, InterceptorLog
 
     userdata = _gud()
@@ -953,7 +953,7 @@ def run(verbose: bool = False) -> None:
         except Exception:
             import json as _json
             import traceback as _tb
-            from operator_use.paths import get_userdata_dir as _gud
+            from operator_use.config.paths import get_userdata_dir as _gud
             _error_file = _gud() / "startup_error.json"
             try:
                 _error_file.parent.mkdir(parents=True, exist_ok=True)

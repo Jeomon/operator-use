@@ -17,7 +17,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-from operator_use.paths import get_userdata_dir
+from operator_use.config.paths import get_userdata_dir
 from operator_use.tools import Tool, ToolResult
 
 logger = logging.getLogger(__name__)

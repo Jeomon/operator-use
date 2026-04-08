@@ -3,7 +3,7 @@
 from pathlib import Path
 import yaml
 from operator_use.tools.service import Tool, ToolResult
-from operator_use.paths import get_named_workspace_dir
+from operator_use.config.paths import get_named_workspace_dir
 from pydantic import BaseModel, Field
 
 
