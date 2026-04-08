@@ -37,7 +37,7 @@ from typing import Any, Optional, Literal
 
 from pydantic import BaseModel, Field
 
-from operator_use.bus.views import IncomingMessage, TextPart
+from operator_use.bus.views import IncomingMessage, TextPart, OutgoingMessage
 from operator_use.messages import HumanMessage
 from operator_use.tools import Tool, ToolResult
 
@@ -147,16 +147,33 @@ async def _run_detached(
     reply_chat_id: str,
     reply_account_id: str,
     task_registry: dict,
+    pending_replies: dict | None = None,
 ) -> None:
     """Run a local agent in the background and announce the result via the bus."""
     logger.info(f"[{task_id}] detached local agent '{agent_name}' started")
+
+    # Stream intermediate updates back to the parent channel
+    async def publish_intermediate(content: str, is_final: bool, init: bool = False) -> None:
+        if not reply_channel or not reply_chat_id or not bus:
+            return
+        await bus.publish_outgoing(
+            OutgoingMessage(
+                chat_id=reply_chat_id,
+                channel=reply_channel,
+                account_id=reply_account_id,
+                parts=[TextPart(content=content)],
+                reply=False,
+                continue_typing=not is_final,
+            )
+        )
+
     try:
         response = await target.run(
             message=message,
             session_id=session_id,
             incoming=incoming,
-            publish_stream=None,
-            pending_replies=None,
+            publish_stream=publish_intermediate if bus else None,
+            pending_replies=pending_replies or {},
         )
         result = str(response.content or "")
         status = "completed"
@@ -372,11 +389,17 @@ async def localagents(
             "created_at": datetime.now(),
         }
 
+    # Create a shared pending_replies dict for parent-child communication
+    # Child can ask parent, parent can respond to child
+    child_pending_replies: dict = {}
+
     delegated_metadata = {
         **current_metadata,
         "_delegated_local_agent_call": True,
         "from_agent": current_agent_id,
         "to_agent": name,
+        "_parent_session_id": parent_session_id,
+        "_parent_pending_replies": child_pending_replies,
         LOCAL_AGENT_DELEGATION_CHAIN: [*delegation_chain, name],
     }
     incoming = IncomingMessage(
@@ -420,6 +443,7 @@ async def localagents(
                 reply_chat_id=parent_chat_id,
                 reply_account_id=parent_account_id,
                 task_registry=task_reg,
+                pending_replies=child_pending_replies,
             ),
             name=f"localagent-{run_task_id}",
         )
@@ -437,13 +461,42 @@ async def localagents(
             f"Use action='send' with session_id='{delegated_session_id}' to start the conversation."
         )
 
+    # Create a publish_stream callback so intermediate messages from the subagent
+    # flow back to the parent's channel in real-time
+    async def publish_intermediate(content: str, is_final: bool, init: bool = False) -> None:
+        if not parent_channel or not parent_chat_id or not bus:
+            return
+        # Publish intermediate messages to the parent channel while the subagent runs
+        await bus.publish_outgoing(
+            OutgoingMessage(
+                chat_id=parent_chat_id,
+                channel=parent_channel,
+                account_id=parent_account_id,
+                parts=[TextPart(content=content)],
+                reply=False,
+                continue_typing=not is_final,
+            )
+        )
+
+    bus = kwargs.get("_bus")
+
+    # Pass the shared pending_replies dict so child can register requests and parent can respond
     response = await target.run(
         message=message,
         session_id=delegated_session_id,
         incoming=incoming,
-        publish_stream=None,
-        pending_replies=None,
+        publish_stream=publish_intermediate if bus else None,
+        pending_replies=child_pending_replies,  # ← Child's requests will be in this dict
     )
+
+    # After child finishes, check if there were any pending requests that parent didn't respond to
+    # and log them so parent can review
+    unresolved = [v for v in child_pending_replies.values() if isinstance(v, dict) and "future" in v]
+    if unresolved:
+        logger.warning(
+            f"Child agent '{name}' left {len(unresolved)} unresolved parent requests. "
+            f"Parent did not respond to: {[v['content'][:50] for v in unresolved]}"
+        )
 
     if action == "spawn":
         return ToolResult.success_result(

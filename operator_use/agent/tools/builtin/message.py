@@ -1,11 +1,14 @@
 ﻿"""Message tools: send messages and reactions to the channel."""
 
 import asyncio
+import logging
 import os
 from operator_use.tools import Tool, ToolResult
 from operator_use.bus import OutgoingMessage, TextPart, ImagePart, AudioPart, FilePart
 from pydantic import BaseModel, Field
 from typing import Literal
+
+logger = logging.getLogger(__name__)
 
 
 # Emoji reactions that work across ALL major platforms:
@@ -45,23 +48,40 @@ class IntermediateMessage(BaseModel):
     content: str = Field(
         ...,
         description=(
-            "The message to send to the user. "
+            "The message to send. "
             "When ask=False: a short progress update — e.g. 'Searching the web…', 'Found 12 results, reading them now…'. "
-            "When ask=True: frame this as a direct question to the user — e.g. 'Which city should I search flights from?', 'Do you want the result as PDF or DOCX?'. The content IS the question."
+            "When ask=True: frame this as a direct question — e.g. 'Which city should I search flights from?', 'Do you want the result as PDF or DOCX?'. "
+            "When to_parent=True: send to parent agent's context (if running as a delegated subagent)."
         ),
     )
     ask: bool = Field(
         default=False,
         description=(
-            "If True, the content is treated as a question — the tool pauses and waits for the user's reply before returning. "
-            "Use when you need a decision or clarification from the user to continue the task. "
-            "The user's reply is returned as the tool result. "
-            "If False (default), send the message and continue working immediately."
+            "If True, the content is treated as a question — the tool pauses and waits for the reply before returning. "
+            "When ask=True + to_parent=True: wait for parent agent's response. "
+            "The reply is returned as the tool result. Default is False (send and continue)."
+        ),
+    )
+    to_parent: bool = Field(
+        default=False,
+        description=(
+            "If True and you are a delegated subagent, send this message to your parent agent instead of the channel. "
+            "Combine with ask=True to ask a clarifying question to the parent agent and wait for their response. "
+            "Example: intermediate_message('Is this desktop or web?', ask=True, to_parent=True) — waits for parent's answer."
+        ),
+    )
+    to_child: str | None = Field(
+        default=None,
+        description=(
+            "Parent agent only: name of the delegated child agent waiting for a response. "
+            "Use this to respond to a child's question (when they called with to_parent=True, ask=True). "
+            "Example: parent calls intermediate_message('Yes, desktop version', to_child='documentation') "
+            "to respond to the documentation agent's earlier question."
         ),
     )
     timeout: int = Field(
         default=300,
-        description="How long to wait for the user's reply in seconds when ask=True. Default is 5 minutes.",
+        description="How long to wait for a reply in seconds when ask=True. Default is 5 minutes.",
     )
     channel: str | None = Field(
         default=None,
@@ -76,10 +96,11 @@ class IntermediateMessage(BaseModel):
 @Tool(
     name="intermediate_message",
     description=(
-        "Send a progress update or ask a clarifying question to the user mid-task. "
-        "Use this to keep the user informed instead of leaving them waiting in silence. "
-        "Call it whenever you start a meaningful step — e.g. 'Searching…', 'Reading the file…', 'Running the command…'. "
-        "Set ask=True when the content is a question and you need the user's answer before you can continue — the tool pauses and returns their reply. "
+        "Send a progress update or ask a clarifying question mid-task. "
+        "Use to keep users/parent agents informed instead of waiting in silence. "
+        "Call whenever you start a meaningful step — e.g. 'Searching…', 'Reading the file…', 'Running the command…'. "
+        "Set ask=True when you need an answer before continuing — the tool pauses and returns the reply. "
+        "Set to_parent=True (with ask=True) to ask the parent agent a clarifying question (subagents only). "
         "This is NOT the final reply — continue working after calling it."
     ),
     model=IntermediateMessage,
@@ -87,24 +108,82 @@ class IntermediateMessage(BaseModel):
 async def intermediate_message(
     content: str,
     ask: bool = False,
+    to_parent: bool = False,
+    to_child: str | None = None,
     timeout: int = 300,
     channel: str | None = None,
     chat_id: str | None = None,
     **kwargs,
 ) -> ToolResult:
-    """Send a progress update to the user mid-task, optionally pausing for their reply."""
+    """Send a progress update or question, optionally to parent agent or waiting for reply."""
     bus = kwargs.get("_bus")
-    ctx_channel = kwargs.get("_channel")
-    ctx_chat_id = kwargs.get("_chat_id")
-    ctx_account_id = kwargs.get("_account_id") or ""
+    session_id: str = kwargs.get("_session_id", "")
     metadata = kwargs.get("_metadata") or {}
-    target_channel = channel if channel is not None else ctx_channel
-    target_chat_id = chat_id if chat_id is not None else ctx_chat_id
-    if not bus or target_channel is None or target_chat_id is None:
-        return ToolResult.error_result("no channel context (internal error)")
+    pending_replies: dict = kwargs.get("_pending_replies", {})
+
     content = (content or "").strip()
     if not content:
         return ToolResult.error_result("Content cannot be empty")
+
+    # Handle parent-child communication: child asks parent
+    if to_parent and ask:
+        parent_session_id = metadata.get("_parent_session_id")
+        parent_pending_replies = metadata.get("_parent_pending_replies")
+        to_agent = metadata.get("to_agent")  # Child's agent name (set by localagents)
+
+        if not parent_session_id or parent_pending_replies is None:
+            return ToolResult.error_result(
+                "to_parent=True only works when running as a delegated subagent. "
+                "You are not in a parent-child context."
+            )
+
+        # Add this message to parent's pending replies so they see it
+        # Use agent name as key for easier parent response
+        child_request_key = f"child_ask_{to_agent}" if to_agent else f"child_ask_{session_id}"
+        future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
+        parent_pending_replies[child_request_key] = {
+            "content": content,
+            "future": future,
+            "from_agent": to_agent or "unknown",
+            "from_session": session_id,
+        }
+
+        logger.info(f"Child agent '{to_agent or 'unknown'}' asking parent: {content[:80]}")
+
+        try:
+            reply = await asyncio.wait_for(future, timeout=timeout)
+            return ToolResult.success_result(f"Parent replied: {reply}")
+        except asyncio.TimeoutError:
+            parent_pending_replies.pop(child_request_key, None)
+            return ToolResult.error_result(f"Parent did not reply within {timeout}s — continuing without parent input.")
+
+    # Handle parent responding to child
+    if to_child:
+        pending_replies_dict = pending_replies if isinstance(pending_replies, dict) else {}
+        child_request_key = f"child_ask_{to_child}"
+
+        if child_request_key not in pending_replies_dict:
+            # List available child requests for debugging
+            available = [k.replace("child_ask_", "") for k in pending_replies_dict.keys() if k.startswith("child_ask_")]
+            avail_str = f" Available: {', '.join(available)}" if available else " No child agents are waiting."
+            return ToolResult.error_result(f"No pending ask from child agent '{to_child}'.{avail_str}")
+
+        request_info = pending_replies_dict[child_request_key]
+        request_info["future"].set_result(content)
+        pending_replies_dict.pop(child_request_key, None)
+
+        logger.info(f"Parent responding to child '{to_child}': {content[:80]}")
+        return ToolResult.success_result(f"Response sent to child agent '{to_child}'.")
+
+    # Default: send to channel (user)
+    ctx_channel = kwargs.get("_channel")
+    ctx_chat_id = kwargs.get("_chat_id")
+    ctx_account_id = kwargs.get("_account_id") or ""
+    target_channel = channel if channel is not None else ctx_channel
+    target_chat_id = chat_id if chat_id is not None else ctx_chat_id
+
+    if not bus or target_channel is None or target_chat_id is None:
+        return ToolResult.error_result("no channel context (internal error)")
 
     await bus.publish_outgoing(
         OutgoingMessage(
@@ -119,8 +198,6 @@ async def intermediate_message(
     )
 
     if ask:
-        pending_replies: dict = kwargs.get("_pending_replies", {})
-        session_id: str = kwargs.get("_session_id", f"{target_channel}:{target_chat_id}")
         future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
         pending_replies[session_id] = future
         try:
