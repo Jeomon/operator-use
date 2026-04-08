@@ -4,6 +4,7 @@ from pathlib import Path
 import yaml
 from operator_use.tools.service import Tool, ToolResult
 from operator_use.config.paths import get_named_workspace_dir
+from operator_use.agent.skills.service import Skills, BUILTIN_SKILLS_DIR
 from pydantic import BaseModel, Field
 
 
@@ -52,28 +53,28 @@ async def skill(
     """Load and present a skill from workspace or builtin skills."""
     workspace = kwargs.get("_workspace") or get_named_workspace_dir("operator")
 
-    # Check workspace skills first
-    skill_file = workspace / "skills" / name / "SKILL.md"
-    if skill_file.exists():
-        skill_dir = skill_file.parent
-    else:
-        # Fall back to builtin skills
-        builtin_skills_dir = Path(__file__).parent.parent.parent / "skills"
-        skill_file = builtin_skills_dir / name / "SKILL.md"
-        if skill_file.exists():
-            skill_dir = skill_file.parent
-        else:
-            return ToolResult.error_result(
-                f"Skill not found: {name}\n"
-                f"Expected path: {workspace / 'skills' / name / 'SKILL.md'}\n"
-                f"or builtin: {builtin_skills_dir / name / 'SKILL.md'}\n"
-                f"Create it at workspace/skills/{name}/SKILL.md"
-            )
+    # Use Skills service to load from workspace or builtin
+    skills_service = Skills(workspace)
+    content = skills_service.load_skill_content(name)
 
-    try:
-        content = skill_file.read_text(encoding="utf-8")
-    except Exception as e:
-        return ToolResult.error_result(f"Failed to read skill '{name}': {e}")
+    if content is None:
+        workspace_skill = workspace / "skills" / name / "SKILL.md"
+        builtin_skill = BUILTIN_SKILLS_DIR / name / "SKILL.md"
+        return ToolResult.error_result(
+            f"Skill not found: {name}\n"
+            f"Expected path: {workspace_skill}\n"
+            f"or builtin: {builtin_skill}\n"
+            f"Create it at workspace/skills/{name}/SKILL.md"
+        )
+
+    # Determine which skill_dir was used (workspace takes precedence)
+    workspace_skill_dir = workspace / "skills" / name
+    builtin_skill_dir = BUILTIN_SKILLS_DIR / name
+
+    if workspace_skill_dir.exists():
+        skill_dir = workspace_skill_dir
+    else:
+        skill_dir = builtin_skill_dir
 
     # Parse YAML frontmatter
     metadata, body = _parse_skill_metadata(content)
