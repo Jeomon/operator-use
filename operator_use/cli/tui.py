@@ -205,7 +205,3 @@ def print_end_first_install():
     console.print(f"[bold {PRIMARY}]│[/bold {PRIMARY}]")
     console.print(f"└ [bold {SECONDARY}]Setup complete![/bold {SECONDARY}] Starting your agent now...")
     console.print()
-    console.print("  [dim]To start Operator next time, install it permanently:[/dim]")
-    console.print(f"    [bold {SECONDARY}]uv tool install operator-use[/bold {SECONDARY}]")
-    console.print("  [dim]Then just type:[/dim]  [bold]operator[/bold]")
-    console.print()

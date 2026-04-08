@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 class SkillParams(BaseModel):
     name: str = Field(
         ...,
-        description="Skill name to load. Skills are in workspace/skills/{name}/SKILL.md. Examples: 'my-skill', 'debug-flow', 'test-runner'",
+        description="Skill name to load. Skills can be in workspace/skills/{name}/SKILL.md or builtin skills directory. Examples: 'my-skill', 'debug-flow', 'google-workspace-cli'",
     )
     args: str | None = Field(
         default=None,
@@ -49,16 +49,26 @@ async def skill(
     args: str | None = None,
     **kwargs,
 ) -> ToolResult:
-    """Load and present a skill from workspace."""
+    """Load and present a skill from workspace or builtin skills."""
     workspace = kwargs.get("_workspace") or get_named_workspace_dir("operator")
-    skill_file = workspace / "skills" / name / "SKILL.md"
 
-    if not skill_file.exists():
-        return ToolResult.error_result(
-            f"Skill not found: {name}\n"
-            f"Expected path: {skill_file}\n"
-            f"Create it at workspace/skills/{name}/SKILL.md"
-        )
+    # Check workspace skills first
+    skill_file = workspace / "skills" / name / "SKILL.md"
+    if skill_file.exists():
+        skill_dir = skill_file.parent
+    else:
+        # Fall back to builtin skills
+        builtin_skills_dir = Path(__file__).parent.parent.parent / "skills"
+        skill_file = builtin_skills_dir / name / "SKILL.md"
+        if skill_file.exists():
+            skill_dir = skill_file.parent
+        else:
+            return ToolResult.error_result(
+                f"Skill not found: {name}\n"
+                f"Expected path: {workspace / 'skills' / name / 'SKILL.md'}\n"
+                f"or builtin: {builtin_skills_dir / name / 'SKILL.md'}\n"
+                f"Create it at workspace/skills/{name}/SKILL.md"
+            )
 
     try:
         content = skill_file.read_text(encoding="utf-8")
@@ -86,9 +96,9 @@ async def skill(
     response_parts.append(body)
 
     # Note about referenced files
-    scripts_dir = workspace / "skills" / name / "scripts"
-    references_dir = workspace / "skills" / name / "references"
-    assets_dir = workspace / "skills" / name / "assets"
+    scripts_dir = skill_dir / "scripts"
+    references_dir = skill_dir / "references"
+    assets_dir = skill_dir / "assets"
 
     if any(d.exists() for d in [scripts_dir, references_dir, assets_dir]):
         response_parts.append("")
