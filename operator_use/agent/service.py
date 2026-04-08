@@ -306,8 +306,14 @@ class Agent:
             system_prompt=system_prompt,
         )
 
-    async def _execute_tool(self, tool_call, thinking, thinking_signature, session: Session):
-        """Execute a tool call and append a ToolMessage to the session."""
+    async def _execute_tool(self, tool_call, thinking, thinking_signature, session: Session, error_messages: list[ToolMessage] | None = None):
+        """Execute a tool call and append a ToolMessage to the session or error_messages list.
+
+        If error_messages list is provided:
+        - Failed tool calls are added to error_messages
+        - Successful tool calls are added to session, and error_messages are cleared
+        Otherwise, all messages go directly to session (backward compatible).
+        """
         # Format tool call nicely: tool_name(param1=value1, param2=value2, ...)
         params_str = ", ".join(f"{k}={repr(v)[:50]}" for k, v in tool_call.params.items())
         logger.info(f"Tool call | {tool_call.name}({params_str})")
@@ -333,14 +339,32 @@ class Agent:
             AfterToolCallContext(session=session, tool_call=tool_call, tool_result=tool_result, content=content),
         )
 
-        session.add_message(ToolMessage(
+        tool_message = ToolMessage(
             id=tool_call.id,
             name=tool_call.name,
             params=tool_call.params,
             content=content,
             thinking=thinking,
             thinking_signature=thinking_signature,
-        ))
+        )
+
+        # Handle error accumulation and cleanup
+        if error_messages is not None:
+            if tool_result.success:
+                # Success: add to session and clear accumulated errors
+                session.add_message(tool_message)
+                num_errors = len(error_messages)
+                error_messages.clear()
+                if num_errors > 0:
+                    logger.info(f"Tool success - cleared {num_errors} accumulated error messages")
+            else:
+                # Failure: add to error_messages list for feedback during retries
+                error_messages.append(tool_message)
+                logger.info(f"Tool added to error queue | accumulated errors: {len(error_messages)}")
+        else:
+            # Backward compatibility: add all messages directly to session
+            session.add_message(tool_message)
+
         return tool_result, content
 
     @staticmethod
@@ -361,8 +385,15 @@ class Agent:
     ) -> AIMessage:
         """Non-streaming agentic loop."""
         tools = self.tool_register.list_tools()
+        error_messages: list[ToolMessage] = []  # Accumulate tool errors for feedback during retries
+
         for iteration in range(self.max_iterations):
+            # Build messages: session history + accumulated errors (for LLM feedback)
             messages = await self._prepare_messages(session, message, prompt_mode, system_prompt)
+            # Include error_messages so LLM sees accumulated failures during retries
+            if error_messages:
+                messages.extend(error_messages)
+
             logger.info(f"LLM call | model={self.llm.model_name} messages={len(messages)} tools={len(tools)}")
             if iteration == 0 and message:
                 await self.hooks.emit(
@@ -391,7 +422,7 @@ class Agent:
             match llm_event.type:
                 case LLMEventType.TOOL_CALL:
                     tool_result, content = await self._execute_tool(
-                        llm_event.tool_call, thinking, thinking_signature, session
+                        llm_event.tool_call, thinking, thinking_signature, session, error_messages
                     )
                     if tool_result.metadata and tool_result.metadata.get("stop_loop"):
                         return AIMessage(content=content or "")
@@ -413,8 +444,15 @@ class Agent:
     ) -> AIMessage:
         """Streaming agentic loop."""
         tools = self.tool_register.list_tools()
+        error_messages: list[ToolMessage] = []  # Accumulate tool errors for feedback during retries
+
         for iteration in range(self.max_iterations):
+            # Build messages: session history + accumulated errors (for LLM feedback)
             messages = await self._prepare_messages(session, message, prompt_mode, system_prompt)
+            # Include error_messages so LLM sees accumulated failures during retries
+            if error_messages:
+                messages.extend(error_messages)
+
             thinking = None
             thinking_signature = None
             content = ""
@@ -454,7 +492,7 @@ class Agent:
                             ),
                         )
                         tool_result, content = await self._execute_tool(
-                            event.tool_call, thinking, thinking_signature, session
+                            event.tool_call, thinking, thinking_signature, session, error_messages
                         )
                         if tool_result.metadata and tool_result.metadata.get("stop_loop"):
                             return AIMessage(content=content or "")
