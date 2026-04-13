@@ -81,6 +81,8 @@ class SessionStore:
 
     def _load_encrypted(self, session_id: str, path: Path, ttl: float) -> Session | None:
         """Load and decrypt a session file written by _save_encrypted()."""
+        from cryptography.fernet import InvalidToken
+
         if self._fernet is None:
             raise ValueError(
                 f"Session {session_id!r} appears to be encrypted but no encryption_key was provided."
@@ -88,10 +90,9 @@ class SessionStore:
         raw = path.read_bytes()
         try:
             decrypted = self._fernet.decrypt(raw)
-        except Exception as exc:
+        except InvalidToken as exc:
             raise ValueError(
-                f"Failed to decrypt session {session_id!r}. "
-                "Ensure the correct encryption_key is configured."
+                f"Failed to decrypt session '{session_id}': wrong key or corrupted data."
             ) from exc
 
         payload = json.loads(decrypted.decode())
