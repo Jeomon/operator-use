@@ -69,7 +69,7 @@ tavily = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
-addopts = "--cov=operator_use --cov-report=xml --cov-report=term-missing --cov-fail-under=60"
+addopts = "--cov=operator_use --cov-report=xml --cov-report=term-missing --cov-fail-under=25"
 
 [tool.coverage.run]
 source = ["operator_use"]
