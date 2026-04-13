@@ -198,9 +198,16 @@ class SessionStore:
     def cleanup(self, ttl: float = DEFAULT_SESSION_TTL) -> list[str]:
         """Delete all sessions whose idle time (since *updated_at*) exceeds *ttl*.
 
-        Returns the list of session IDs (filesystem-safe stems) that were removed.
+        Returns the list of session IDs that were removed.
         Archived session files are skipped.
         """
+        # Build a reverse map: filesystem stem -> original session_id (in-memory key).
+        # Sessions with `:` in their IDs are stored under the original ID in
+        # self._sessions but their filename stem uses `_` as a replacement.
+        stem_to_original: dict[str, str] = {
+            self._session_id_to_filename(sid): sid for sid in self._sessions
+        }
+
         removed: list[str] = []
         for path in self.sessions_dir.glob("*.jsonl"):
             # Skip archived sessions
@@ -212,9 +219,12 @@ class SessionStore:
                 continue
             if session.is_expired():
                 path.unlink()
-                if session_id_fs in self._sessions:
-                    del self._sessions[session_id_fs]
-                removed.append(session_id_fs)
+                # Evict from in-memory cache using the original session ID if known,
+                # otherwise fall back to the filesystem-safe stem.
+                original_id = stem_to_original.get(session_id_fs, session_id_fs)
+                if original_id in self._sessions:
+                    del self._sessions[original_id]
+                removed.append(original_id)
         return removed
 
     def list_sessions(self) -> list[dict[str, Any]]:
