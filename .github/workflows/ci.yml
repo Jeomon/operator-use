@@ -31,5 +31,13 @@ jobs:
       - name: Lint with ruff
         run: uv run ruff check .
 
-      - name: Run tests
+      - name: Run tests with coverage
         run: uv run pytest tests/ -q --tb=short
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-py${{ matrix.python-version }}
+          path: coverage.xml
+          retention-days: 30
