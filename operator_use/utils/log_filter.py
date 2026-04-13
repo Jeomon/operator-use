@@ -7,6 +7,11 @@ import re
 # Patterns that match common credential formats in log strings.
 # Order matters: more specific patterns should come before general ones.
 _MASK_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # URL DSN credentials: scheme://user:password@host or scheme://:password@host
+    (
+        re.compile(r"(://[^:@/\s]*:)[^@\s]+(@)"),
+        r"\1***REDACTED***\2",
+    ),
     # JWT-like strings (three base64url segments separated by dots)
     (
         re.compile(r"eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+"),

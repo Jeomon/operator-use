@@ -108,6 +108,24 @@ class TestMaskCredentials:
         assert "count" in result  # key preserved
         assert "12345678901234" in result  # short value not masked
 
+    # --- URL DSN credential patterns (Issue #22) ---
+
+    def test_masks_dsn_password(self):
+        raw = "connecting to postgresql://admin:s3cr3tpassword@prod-db:5432/users"
+        result = mask_credentials(raw)
+        assert "s3cr3tpassword" not in result
+        assert "***REDACTED***" in result
+
+    def test_masks_mongodb_dsn(self):
+        raw = "mongodb://root:hunter2@mongo:27017/mydb"
+        result = mask_credentials(raw)
+        assert "hunter2" not in result
+
+    def test_masks_redis_dsn(self):
+        raw = "redis://:mypassword@redis-host:6379"
+        result = mask_credentials(raw)
+        assert "mypassword" not in result
+
 
 class TestCredentialMaskingFilter:
     def test_filter_masks_record_msg(self):
