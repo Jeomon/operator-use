@@ -291,7 +291,6 @@ class SessionConfig(Base):
     """Session lifecycle configuration."""
 
     ttl_hours: float = 24.0  # Session idle timeout in hours (default: 24h)
-    encrypt: bool = False  # Encrypt session files at rest (AES-256 via Fernet)
 
 
 class Config(BaseSettings):
