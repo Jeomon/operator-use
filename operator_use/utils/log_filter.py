@@ -76,12 +76,15 @@ class CredentialMaskingFilter(logging.Filter):
 
 
 def install_credential_masking() -> None:
-    """Install credential masking on the root logger and all its handlers.
+    """Install credential masking on the root logger and all current handlers.
 
     Attaches CredentialMaskingFilter both to the root logger and to every
     handler on the root logger, ensuring records emitted via named loggers
     (logging.getLogger(__name__)) are masked regardless of propagation path.
-    Call once at startup.
+
+    Must be called *after* all handlers have been added to the root logger
+    (e.g. at the end of setup_logging()). Handlers added after this call
+    will not automatically receive the filter.
     """
     root_logger = logging.getLogger()
     filter_instance = CredentialMaskingFilter()
