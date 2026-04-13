@@ -51,3 +51,16 @@ async def test_smoke_unique_sessions_are_isolated(test_agent):
 
     assert not any("session B message" in t for t in a_texts if t)
     assert not any("session A message" in t for t in b_texts if t)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_routes_message_to_agent(test_orchestrator):
+    """Full pipeline: orchestrator.process_direct() → agent → response.
+
+    Uses process_direct() to invoke the full Orchestrator pipeline
+    (message building → agent routing → LLM loop → response building)
+    without starting the blocking bus consume loop (ainvoke).
+    The mock LLM always returns "pong", so we assert the response is non-empty.
+    """
+    response = await test_orchestrator.process_direct("ping", channel="cli", chat_id="e2e:orch")
+    assert response, "Orchestrator must return a non-empty response for a simple text message"

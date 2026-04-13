@@ -26,6 +26,7 @@ from operator_use.bus.views import IncomingMessage, OutgoingMessage, TextPart
 from operator_use.gateway.channels.base import BaseChannel
 from operator_use.gateway.service import Gateway
 from operator_use.messages.service import HumanMessage
+from operator_use.orchestrator.service import Orchestrator
 from operator_use.providers.events import LLMEvent, LLMEventType, ToolCall
 from operator_use.tools.service import Tool
 
@@ -197,3 +198,42 @@ def mock_llm_with_tool_call(tmp_path):
         return called_tools
 
     return _factory
+
+
+@pytest.fixture()
+def test_orchestrator(mock_llm_provider, tmp_path):
+    """Orchestrator wired to a test agent and an in-memory Bus.
+
+    The Orchestrator is the highest-level pipeline coordinator in this codebase:
+    it owns STT/TTS, message building (IncomingMessage → HumanMessage), agent
+    routing, and the outgoing-message construction.  There is no separate
+    "Gateway" involved here because the fixture targets the Orchestrator layer
+    directly, not the full channel-gateway stack.
+
+    ``process_direct()`` is used in tests instead of ``ainvoke()`` so the test
+    can invoke the pipeline synchronously without starting the async consume
+    loop that blocks indefinitely on the bus queue.
+
+    Components wired together:
+    - mock_llm_provider  — deterministic LLM; no API keys required
+    - Agent              — LLM agentic loop; isolated tmp workspace
+    - Bus                — in-memory async queues
+    - Orchestrator       — routes Bus messages to the Agent and back
+
+    Returns an Orchestrator instance ready for use with ``process_direct()``.
+    """
+    bus = Bus()
+    agent = Agent(
+        llm=mock_llm_provider,
+        agent_id="e2e-orchestrator-agent",
+        workspace=tmp_path,
+        tools=[],
+        max_iterations=10,
+        bus=bus,
+    )
+    return Orchestrator(
+        bus=bus,
+        agents={"operator": agent},
+        default_agent="operator",
+        streaming=False,  # disable streaming so tests use the simple ainvoke path
+    )
