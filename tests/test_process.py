@@ -1,20 +1,20 @@
-"""Tests for Process and ProcessManager."""
+"""Tests for ProcessSession and ProcessStore."""
 
 import asyncio
 import pytest
 from unittest.mock import MagicMock
 
-from operator_use.process.views import Process
-from operator_use.process.manager import ProcessManager
+from operator_use.process.views import ProcessSession
+from operator_use.process.service import ProcessStore
 
 
-# --- Process (view) ---
+# --- ProcessSession (view) ---
 
 
-def make_mock_session(running: bool = True) -> Process:
+def make_mock_session(running: bool = True) -> ProcessSession:
     proc = MagicMock()
     proc.returncode = None if running else 0
-    return Process(session_id="abc123", cmd="echo hi", process=proc)
+    return ProcessSession(session_id="abc123", cmd="echo hi", process=proc)
 
 
 def test_session_is_running_true():
@@ -35,7 +35,7 @@ def test_session_exit_code_none_when_running():
 def test_session_exit_code_when_done():
     proc = MagicMock()
     proc.returncode = 1
-    s = Process(session_id="x", cmd="fail", process=proc)
+    s = ProcessSession(session_id="x", cmd="fail", process=proc)
     assert s.exit_code == 1
 
 
@@ -74,24 +74,24 @@ def test_session_has_started_at():
     assert s.started_at is not None
 
 
-# --- ProcessManager ---
+# --- ProcessStore ---
 
 
 def test_process_store_get_missing():
-    store = ProcessManager()
+    store = ProcessStore()
     assert store.get("nonexistent") is None
 
 
 def test_process_store_clear_nonexistent():
-    store = ProcessManager()
+    store = ProcessStore()
     assert store.clear("ghost") is False
 
 
 def test_process_store_clear_running_session():
-    store = ProcessManager()
+    store = ProcessStore()
     proc = MagicMock()
     proc.returncode = None
-    session = Process(session_id="s1", cmd="sleep 10", process=proc)
+    session = ProcessSession(session_id="s1", cmd="sleep 10", process=proc)
     session._reader = None
     store._sessions["s1"] = session
     result = store.clear("s1")
@@ -101,10 +101,10 @@ def test_process_store_clear_running_session():
 
 
 def test_process_store_clear_finished_session():
-    store = ProcessManager()
+    store = ProcessStore()
     proc = MagicMock()
     proc.returncode = 0
-    session = Process(session_id="s2", cmd="echo done", process=proc)
+    session = ProcessSession(session_id="s2", cmd="echo done", process=proc)
     session._reader = None
     store._sessions["s2"] = session
     result = store.clear("s2")
@@ -113,10 +113,10 @@ def test_process_store_clear_finished_session():
 
 
 def test_process_store_clear_cancels_reader():
-    store = ProcessManager()
+    store = ProcessStore()
     proc = MagicMock()
     proc.returncode = None
-    session = Process(session_id="s3", cmd="tail -f log", process=proc)
+    session = ProcessSession(session_id="s3", cmd="tail -f log", process=proc)
     reader = MagicMock()
     reader.done.return_value = False
     session._reader = reader
@@ -127,7 +127,7 @@ def test_process_store_clear_cancels_reader():
 
 @pytest.mark.asyncio
 async def test_process_store_spawn_and_get():
-    store = ProcessManager()
+    store = ProcessStore()
     session = await store.spawn("echo hello")
     assert session is not None
     assert session.session_id is not None
@@ -139,7 +139,7 @@ async def test_process_store_spawn_and_get():
 
 @pytest.mark.asyncio
 async def test_process_store_spawn_output_captured():
-    store = ProcessManager()
+    store = ProcessStore()
     session = await store.spawn("echo captured_output")
     await asyncio.sleep(0.3)
     log = session.full_log()
