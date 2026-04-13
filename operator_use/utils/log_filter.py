@@ -28,8 +28,13 @@ _MASK_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"nvapi-[A-Za-z0-9\-_]{8,}", re.IGNORECASE), "nvapi-***REDACTED***"),
     # API keys / tokens with common prefixes (sk-, pk-, api-, token-, key-)
     # Allows multi-segment keys like sk-proj-abc12345678
+    # \b guards the word start; (?=...\d) requires at least one digit in the suffix
+    # to avoid matching infrastructure words like "api-gateway-endpoint"
     (
-        re.compile(r"(sk|pk|api|token|key)[-_][A-Za-z0-9\-_]{8,}", re.IGNORECASE),
+        re.compile(
+            r"\b(sk|pk|api|token|key)[-_](?=[A-Za-z0-9\-_]*\d)[A-Za-z0-9\-_]{8,}",
+            re.IGNORECASE,
+        ),
         r"\1-***REDACTED***",
     ),
     # Authorization / x-api-key / x-auth-token headers

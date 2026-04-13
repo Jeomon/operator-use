@@ -126,6 +126,22 @@ class TestMaskCredentials:
         result = mask_credentials(raw)
         assert "mypassword" not in result
 
+    # --- Word-boundary false-positive fixes (Issue #22) ---
+
+    def test_no_false_positive_on_api_hyphen_word(self):
+        result = mask_credentials("request to api-gateway-endpoint/v1/health")
+        assert result == "request to api-gateway-endpoint/v1/health"
+
+    def test_no_false_positive_on_key_hyphen_word(self):
+        result = mask_credentials("hotkey-sequence pressed")
+        assert result == "hotkey-sequence pressed"
+
+    def test_real_api_key_still_masked(self):
+        """Ensure the word-boundary fix doesn't break masking of real API keys."""
+        result = mask_credentials("key=api-abcdef12345678")
+        assert "abcdef12345678" not in result
+        assert "REDACTED" in result
+
 
 class TestCredentialMaskingFilter:
     def test_filter_masks_record_msg(self):
