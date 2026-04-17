@@ -45,7 +45,8 @@ class MCPTool(Tool):
             expected_props = set(self._input_schema["properties"].keys())
 
         clean_kwargs = {
-            k: v for k, v in kwargs.items()
+            k: v
+            for k, v in kwargs.items()
             if not k.startswith("_") and (not expected_props or k in expected_props)
         }
 
