@@ -285,14 +285,27 @@ class Orchestrator:
     async def _handle_message(self, request_message: IncomingMessage) -> None:
         """Process one incoming message end-to-end."""
         session_id = self._get_session_id(request_message)
+
+        # Gate: require /start if no session file exists
+        agent = self._resolve_agent(request_message)
+        if agent.sessions.load(session_id) is None:
+            await self.bus.publish_outgoing(
+                OutgoingMessage(
+                    chat_id=request_message.chat_id,
+                    channel=request_message.channel,
+                    account_id=request_message.account_id,
+                    parts=[TextPart(content="No active session. Type /start to begin.")],
+                    metadata=request_message.metadata,
+                    reply=True,
+                )
+            )
+            return
+
         try:
             # Build HumanMessage/ImageMessage (runs STT if needed)
             built_message = await self._build_request_message(request_message)
             if hasattr(built_message, "metadata") and request_message.metadata:
                 built_message.metadata = dict(request_message.metadata)
-
-            # Route to the correct agent
-            agent = self._resolve_agent(request_message)
 
             # Decide streaming: orchestrator knows channel type + voice flag
             use_streaming = (

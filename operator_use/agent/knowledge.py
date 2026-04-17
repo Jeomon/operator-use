@@ -15,9 +15,6 @@ class Knowledge:
 
     2. Flat files (legacy / simple):
        knowledge/company.md                    → name: "company"
-
-    Files named "context.md" are treated as directory-node content.
-    Files named "embedding.npy" are semantic index artifacts — ignored in listing.
     """
 
     def __init__(self, workspace: Path) -> None:

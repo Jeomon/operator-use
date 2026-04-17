@@ -960,6 +960,7 @@ class TelegramChannel(BaseChannel):
                 chat_id=chat_id,
                 parts=[TextPart(content="/start" + (f" {args}" if args else ""))],
                 user_id=str(update.effective_user.id) if update.effective_user else "",
+                account_id=self._cfg("account_id") or "",
                 metadata={"_command": "start", "_command_args": args, "thread_id": thread_id},
             )
             await self.receive(incoming)
@@ -976,6 +977,7 @@ class TelegramChannel(BaseChannel):
             chat_id=chat_id,
             parts=[TextPart(content="/stop")],
             user_id=str(update.effective_user.id) if update.effective_user else "",
+            account_id=self._cfg("account_id") or "",
             metadata={"_command": "stop", "thread_id": thread_id},
         )
         await self.receive(incoming)
@@ -992,6 +994,7 @@ class TelegramChannel(BaseChannel):
             chat_id=chat_id,
             parts=[TextPart(content="/restart")],
             user_id=str(update.effective_user.id) if update.effective_user else "",
+            account_id=self._cfg("account_id") or "",
             metadata={"_command": "restart", "thread_id": thread_id},
         )
         await self.receive(incoming)

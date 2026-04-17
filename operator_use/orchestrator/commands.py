@@ -73,14 +73,17 @@ async def handle_command(
 
 
 async def _cmd_start(session_id: str, agent: "Agent", session_name: str | None = None) -> str:
-    existing = agent.sessions.load(session_id)
     name_label = f" '{session_name}'" if session_name else ""
-    if existing and existing.messages:
+    if agent.sessions.load(session_id) is not None:
         return f"Session{name_label} is already active. Use /stop to end it first."
+    fresh = agent.sessions.get_or_create(session_id)
+    agent.sessions.save(fresh)
     return f"Session{name_label} started.\n\n{_HELP_TEXT}"
 
 
 async def _cmd_stop(session_id: str, agent: "Agent") -> str:
+    if agent.sessions.load(session_id) is None:
+        return "No active session to stop. Use /start to begin one."
     agent.sessions.archive(session_id)
     return "Session saved and closed.\nUse /start to begin a new session."
 
