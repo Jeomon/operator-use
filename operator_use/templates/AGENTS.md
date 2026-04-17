@@ -294,24 +294,74 @@ Also scan recent session files (`sessions/*.jsonl`) for facts you had to look up
 
 ```python
 # workspace/tools/my_tool.py
-from operator_use.tools.service import Tool, ToolResult
-from pydantic import BaseModel
+from operator_use.tools import Tool, ToolResult
+from pydantic import BaseModel, Field
 
 class MyParams(BaseModel):
-    input: str
+    input: str = Field(..., description="Describe this param — shown to the LLM")
 
-@Tool(name="my_tool", description="What this tool does", model=MyParams)
-def my_tool(input: str) -> ToolResult:
-    result = do_something(input)
-    return ToolResult.success_result(result)
+@Tool(name="my_tool", description="What this tool does and when to use it", model=MyParams)
+def my_tool(input: str, **kwargs) -> ToolResult:
+    try:
+        result = do_something(input)
+        return ToolResult.success_result(str(result))
+    except Exception as e:
+        return ToolResult.error_result(f"my_tool failed: {e}")
 ```
+
+Async tools work identically — just use `async def my_tool(...)`.
+
+### ToolResult reference
+
+```python
+# Success — output is shown to the LLM as the tool result
+ToolResult.success_result(output: str, metadata: dict = None) -> ToolResult
+
+# Failure — error is shown to the LLM; agent sees the tool failed
+ToolResult.error_result(error: str, metadata: dict = None) -> ToolResult
+
+# Full form — set fields directly
+ToolResult(success=True, output="...", error=None, metadata={"key": "value"})
+```
+
+- `output` and `error` must be **strings** — never pass a dict or list directly; use `str()` or `json.dumps()`
+- `metadata` is optional; it is NOT shown to the LLM — use it to pass structured data for logging or downstream use
+
+### kwargs injected by the registry
+
+Always include `**kwargs` in your function signature. The registry injects these at call time:
+
+| Key | Type | What it is |
+|---|---|---|
+| `_workspace` | `Path` | Path to this agent's workspace directory |
+| `_channel` | `str` | Channel name (e.g. `"telegram"`) |
+| `_chat_id` | `str` | Chat/user ID on that channel |
+| `_llm` | `BaseChatLLM` | The agent's LLM instance (for tools that need to call the LLM) |
+| `_agent` | `Agent` | The agent instance itself |
+| `_agent_id` | `str` | The agent's configured ID (e.g. `"jarvis"`) |
+| `_gateway` | `Gateway` | Gateway for sending messages to channels |
+| `_bus` | `Bus` | Message bus (incoming/outgoing queues) |
+| `_session_id` | `str` | Current session ID |
+| `_metadata` | `dict` | Raw metadata from the incoming message |
 
 ### Rules
 
 - One file per tool (or multiple tools per file if they're closely related)
 - Tool names must be unique — conflicts with builtin tools are skipped with a warning
-- Async tools are supported: `async def my_tool(...)` works too
 - If a tool errors on load, it's skipped and logged — it won't crash the agent
+- Always include `**kwargs` — even if you don't use any injected values
+- Always return a `ToolResult` — never return a raw string or dict
+
+### Installing dependencies
+
+Use `uv pip install` — installs into the active venv. **Do not use plain `pip install`** — it targets system Python, not the project venv.
+
+```bash
+uv pip install <package>    # installs into the active venv, no pyproject.toml update
+uv add <package>            # same, but also pins it in pyproject.toml (use for permanent deps)
+```
+
+Then restart. The package will be available on the next startup.
 
 ### When to build a tool vs a skill
 

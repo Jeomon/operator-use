@@ -119,14 +119,14 @@ The agent reads and can self-update a `workspace/` directory. Everything here is
 
 ```python
 # workspace/tools/my_tool.py
-from operator_use.tools.service import Tool, ToolResult
+from operator_use.tools import Tool, ToolResult
 from pydantic import BaseModel
 
 class MyParams(BaseModel):
     input: str
 
 @Tool(name="my_tool", description="What this tool does", model=MyParams)
-def my_tool(input: str) -> ToolResult:
+def my_tool(input: str, **kwargs) -> ToolResult:
     result = do_something(input)
     return ToolResult.success_result(result)
 ```
