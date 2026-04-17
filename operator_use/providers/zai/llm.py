@@ -271,56 +271,60 @@ class ChatZAI(BaseChatLLM):
         structured_output: BaseModel | None = None,
         json_mode: bool = False,
     ) -> LLMEvent:
-        zai_messages = self._convert_messages(messages)
-        zai_tools = self._convert_tools(tools) if tools else None
+        try:
+            zai_messages = self._convert_messages(messages)
+            zai_tools = self._convert_tools(tools) if tools else None
 
-        params = {"model": self._model, "messages": zai_messages, **self.kwargs}
+            params = {"model": self._model, "messages": zai_messages, **self.kwargs}
 
-        if zai_tools:
-            params["tools"] = zai_tools
+            if zai_tools:
+                params["tools"] = zai_tools
 
-        if self.temperature is not None:
-            params["temperature"] = self.temperature
+            if self.temperature is not None:
+                params["temperature"] = self.temperature
 
-        if json_mode:
-            params["response_format"] = {"type": "json_object"}
+            if json_mode:
+                params["response_format"] = {"type": "json_object"}
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions", json=params, headers=headers
-            )
-            response.raise_for_status()
-            response_data = response.json()
-
-        if structured_output:
-            try:
-                content_text = response_data["choices"][0]["message"]["content"]
-                if content_text:
-                    parsed = structured_output.model_validate_json(content_text)
-                else:
-                    parsed = structured_output()
-
-                content = parsed.model_dump() if hasattr(parsed, "model_dump") else str(parsed)
-                return LLMEvent(
-                    type=LLMEventType.TEXT,
-                    content=json.dumps(content) if isinstance(content, dict) else content,
-                    usage=TokenUsage(
-                        prompt_tokens=response_data.get("usage", {}).get("prompt_tokens", 0),
-                        completion_tokens=response_data.get("usage", {}).get(
-                            "completion_tokens", 0
-                        ),
-                        total_tokens=response_data.get("usage", {}).get("total_tokens", 0),
-                    ),
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions", json=params, headers=headers
                 )
-            except (json.JSONDecodeError, ValueError) as e:
-                logger.error(f"Failed to parse structured output: {e}")
+                response.raise_for_status()
+                response_data = response.json()
 
-        return self._process_response(response_data)
+            if structured_output:
+                try:
+                    content_text = response_data["choices"][0]["message"]["content"]
+                    if content_text:
+                        parsed = structured_output.model_validate_json(content_text)
+                    else:
+                        parsed = structured_output()
+
+                    content = parsed.model_dump() if hasattr(parsed, "model_dump") else str(parsed)
+                    return LLMEvent(
+                        type=LLMEventType.TEXT,
+                        content=json.dumps(content) if isinstance(content, dict) else content,
+                        usage=TokenUsage(
+                            prompt_tokens=response_data.get("usage", {}).get("prompt_tokens", 0),
+                            completion_tokens=response_data.get("usage", {}).get(
+                                "completion_tokens", 0
+                            ),
+                            total_tokens=response_data.get("usage", {}).get("total_tokens", 0),
+                        ),
+                    )
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.error(f"Failed to parse structured output: {e}")
+
+            return self._process_response(response_data)
+        except Exception as e:
+            logger.error(f"LLM error | {e}")
+            return LLMEvent(type=LLMEventType.ERROR, error=str(e))
 
     @overload
     def stream(
@@ -463,114 +467,118 @@ class ChatZAI(BaseChatLLM):
         structured_output: BaseModel | None = None,
         json_mode: bool = False,
     ) -> AsyncIterator[LLMStreamEvent]:
-        zai_messages = self._convert_messages(messages)
-        zai_tools = self._convert_tools(tools) if tools else None
+        try:
+            zai_messages = self._convert_messages(messages)
+            zai_tools = self._convert_tools(tools) if tools else None
 
-        params = {"model": self._model, "messages": zai_messages, "stream": True, **self.kwargs}
+            params = {"model": self._model, "messages": zai_messages, "stream": True, **self.kwargs}
 
-        if zai_tools:
-            params["tools"] = zai_tools
+            if zai_tools:
+                params["tools"] = zai_tools
 
-        if self.temperature is not None:
-            params["temperature"] = self.temperature
+            if self.temperature is not None:
+                params["temperature"] = self.temperature
 
-        if json_mode:
-            params["response_format"] = {"type": "json_object"}
+            if json_mode:
+                params["response_format"] = {"type": "json_object"}
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            async with client.stream(
-                "POST", f"{self.base_url}/chat/completions", json=params, headers=headers
-            ) as response:
-                response.raise_for_status()
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST", f"{self.base_url}/chat/completions", json=params, headers=headers
+                ) as response:
+                    response.raise_for_status()
 
-                # Accumulators for streamed tool calls
-                tool_call_id = None
-                tool_call_name = None
-                tool_call_args = ""
-                usage = None
+                    # Accumulators for streamed tool calls
+                    tool_call_id = None
+                    tool_call_name = None
+                    tool_call_args = ""
+                    usage = None
 
-                text_started = False
-                think_started = False
+                    text_started = False
+                    think_started = False
 
-                async for line in response.aiter_lines():
-                    if not line or line.startswith(":"):
-                        continue
-
-                    if line.startswith("data: "):
-                        data = line[6:]
-                        if data == "[DONE]":
-                            break
-
-                        try:
-                            chunk = json.loads(data)
-                        except json.JSONDecodeError:
+                    async for line in response.aiter_lines():
+                        if not line or line.startswith(":"):
                             continue
 
-                        if not chunk.get("choices"):
-                            if chunk.get("usage"):
-                                usage = TokenUsage(
-                                    prompt_tokens=chunk["usage"].get("prompt_tokens", 0),
-                                    completion_tokens=chunk["usage"].get("completion_tokens", 0),
-                                    total_tokens=chunk["usage"].get("total_tokens", 0),
+                        if line.startswith("data: "):
+                            data = line[6:]
+                            if data == "[DONE]":
+                                break
+
+                            try:
+                                chunk = json.loads(data)
+                            except json.JSONDecodeError:
+                                continue
+
+                            if not chunk.get("choices"):
+                                if chunk.get("usage"):
+                                    usage = TokenUsage(
+                                        prompt_tokens=chunk["usage"].get("prompt_tokens", 0),
+                                        completion_tokens=chunk["usage"].get("completion_tokens", 0),
+                                        total_tokens=chunk["usage"].get("total_tokens", 0),
+                                    )
+                                continue
+
+                            delta = chunk["choices"][0].get("delta", {})
+
+                            reasoning_delta = delta.get("reasoning") or delta.get("reasoning_content")
+                            if reasoning_delta:
+                                if not think_started:
+                                    think_started = True
+                                    yield LLMStreamEvent(type=LLMStreamEventType.THINK_START)
+                                yield LLMStreamEvent(
+                                    type=LLMStreamEventType.THINK_DELTA, content=reasoning_delta
                                 )
-                            continue
 
-                        delta = chunk["choices"][0].get("delta", {})
+                            if delta.get("content"):
+                                if think_started:
+                                    yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
+                                    think_started = False
+                                if not text_started:
+                                    text_started = True
+                                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
+                                yield LLMStreamEvent(
+                                    type=LLMStreamEventType.TEXT_DELTA, content=delta["content"]
+                                )
 
-                        reasoning_delta = delta.get("reasoning") or delta.get("reasoning_content")
-                        if reasoning_delta:
-                            if not think_started:
-                                think_started = True
-                                yield LLMStreamEvent(type=LLMStreamEventType.THINK_START)
-                            yield LLMStreamEvent(
-                                type=LLMStreamEventType.THINK_DELTA, content=reasoning_delta
-                            )
+                            # Accumulate tool call deltas
+                            if delta.get("tool_calls"):
+                                tc_delta = delta["tool_calls"][0]
+                                if tc_delta.get("id"):
+                                    tool_call_id = tc_delta["id"]
+                                if tc_delta.get("function"):
+                                    func = tc_delta["function"]
+                                    if func.get("name"):
+                                        tool_call_name = func["name"]
+                                    if func.get("arguments"):
+                                        tool_call_args += func["arguments"]
 
-                        if delta.get("content"):
-                            if think_started:
-                                yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
-                                think_started = False
-                            if not text_started:
-                                text_started = True
-                                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
-                            yield LLMStreamEvent(
-                                type=LLMStreamEventType.TEXT_DELTA, content=delta["content"]
-                            )
+                    # Yield accumulated tool call as final response
+                    if tool_call_id and tool_call_name:
+                        try:
+                            params = json.loads(tool_call_args)
+                        except json.JSONDecodeError:
+                            params = {}
 
-                        # Accumulate tool call deltas
-                        if delta.get("tool_calls"):
-                            tc_delta = delta["tool_calls"][0]
-                            if tc_delta.get("id"):
-                                tool_call_id = tc_delta["id"]
-                            if tc_delta.get("function"):
-                                func = tc_delta["function"]
-                                if func.get("name"):
-                                    tool_call_name = func["name"]
-                                if func.get("arguments"):
-                                    tool_call_args += func["arguments"]
-
-                # Yield accumulated tool call as final response
-                if tool_call_id and tool_call_name:
-                    try:
-                        params = json.loads(tool_call_args)
-                    except json.JSONDecodeError:
-                        params = {}
-
-                    yield LLMStreamEvent(
-                        type=LLMStreamEventType.TOOL_CALL,
-                        tool_call=ToolCall(id=tool_call_id, name=tool_call_name, params=params),
-                        usage=usage,
-                    )
-                else:
-                    if think_started:
-                        yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
-                    if text_started:
-                        yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+                        yield LLMStreamEvent(
+                            type=LLMStreamEventType.TOOL_CALL,
+                            tool_call=ToolCall(id=tool_call_id, name=tool_call_name, params=params),
+                            usage=usage,
+                        )
+                    else:
+                        if think_started:
+                            yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
+                        if text_started:
+                            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+        except Exception as e:
+            logger.error(f"LLM stream error | {e}")
+            yield LLMStreamEvent(type=LLMStreamEventType.ERROR, content=str(e))
 
     def get_metadata(self) -> Metadata:
         context_window = self.MODELS.get(self._model, 131072)

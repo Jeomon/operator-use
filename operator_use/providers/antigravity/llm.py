@@ -487,26 +487,30 @@ class ChatAntigravity(BaseChatLLM):
         structured_output=None,
         json_mode: bool = False,
     ) -> LLMEvent:
-        headers, body = await self._async_prepare(messages, tools)
-        chunks: list[dict] = []
+        try:
+            headers, body = await self._async_prepare(messages, tools)
+            chunks: list[dict] = []
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            async with client.stream(
-                "POST", self._endpoint + _STREAM, headers=headers, json=body
-            ) as r:
-                if r.status_code >= 400:
-                    await r.aread()
-                    raise httpx.HTTPStatusError(
-                        f"{r.status_code} {r.reason_phrase}: {r.text}",
-                        request=r.request,
-                        response=r,
-                    )
-                async for line in r.aiter_lines():
-                    chunk = _parse_sse_line(line)
-                    if chunk:
-                        chunks.append(chunk)
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                async with client.stream(
+                    "POST", self._endpoint + _STREAM, headers=headers, json=body
+                ) as r:
+                    if r.status_code >= 400:
+                        await r.aread()
+                        raise httpx.HTTPStatusError(
+                            f"{r.status_code} {r.reason_phrase}: {r.text}",
+                            request=r.request,
+                            response=r,
+                        )
+                    async for line in r.aiter_lines():
+                        chunk = _parse_sse_line(line)
+                        if chunk:
+                            chunks.append(chunk)
 
-        return _extract_final(chunks)
+            return _extract_final(chunks)
+        except Exception as e:
+            logger.error(f"LLM error | {e}")
+            return LLMEvent(type=LLMEventType.ERROR, error=str(e))
 
     def stream(
         self,
@@ -591,76 +595,80 @@ class ChatAntigravity(BaseChatLLM):
         structured_output=None,
         json_mode: bool = False,
     ) -> AsyncIterator[LLMStreamEvent]:
-        headers, body = await self._async_prepare(messages, tools)
+        try:
+            headers, body = await self._async_prepare(messages, tools)
 
-        text_started = False
-        think_started = False
-        tool_name: Optional[str] = None
-        tool_call_id: Optional[str] = None
-        tool_args: dict = {}
-        thought_signature: Optional[str] = None
-        usage = None
+            text_started = False
+            think_started = False
+            tool_name: Optional[str] = None
+            tool_call_id: Optional[str] = None
+            tool_args: dict = {}
+            thought_signature: Optional[str] = None
+            usage = None
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            async with client.stream(
-                "POST", self._endpoint + _STREAM, headers=headers, json=body
-            ) as r:
-                if r.status_code >= 400:
-                    logger.error(
-                        f"Antigravity astream 400+ error: {r.status_code}\n{(await r.aread()).decode()}"
-                    )
-                async for line in r.aiter_lines():
-                    chunk = _parse_sse_line(line)
-                    if not chunk:
-                        continue
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                async with client.stream(
+                    "POST", self._endpoint + _STREAM, headers=headers, json=body
+                ) as r:
+                    if r.status_code >= 400:
+                        logger.error(
+                            f"Antigravity astream 400+ error: {r.status_code}\n{(await r.aread()).decode()}"
+                        )
+                    async for line in r.aiter_lines():
+                        chunk = _parse_sse_line(line)
+                        if not chunk:
+                            continue
 
-                    t, th, fc, ts, meta = _extract_from_chunk(chunk)
-                    if meta:
-                        usage = _make_usage(meta)
+                        t, th, fc, ts, meta = _extract_from_chunk(chunk)
+                        if meta:
+                            usage = _make_usage(meta)
 
-                    if th:
-                        if not think_started:
-                            think_started = True
-                            yield LLMStreamEvent(type=LLMStreamEventType.THINK_START)
-                        yield LLMStreamEvent(type=LLMStreamEventType.THINK_DELTA, content=th)
+                        if th:
+                            if not think_started:
+                                think_started = True
+                                yield LLMStreamEvent(type=LLMStreamEventType.THINK_START)
+                            yield LLMStreamEvent(type=LLMStreamEventType.THINK_DELTA, content=th)
 
-                    if ts and not thought_signature:
-                        thought_signature = ts
+                        if ts and not thought_signature:
+                            thought_signature = ts
 
-                    if t:
-                        if think_started:
-                            yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
-                            think_started = False
-                        if not text_started:
-                            text_started = True
-                            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
-                        yield LLMStreamEvent(type=LLMStreamEventType.TEXT_DELTA, content=t)
+                        if t:
+                            if think_started:
+                                yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
+                                think_started = False
+                            if not text_started:
+                                text_started = True
+                                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
+                            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_DELTA, content=t)
 
-                    if fc:
-                        tool_name = fc.get("name")
-                        tool_args = fc.get("args", {})
-                        if isinstance(tool_args, str):
-                            try:
-                                tool_args = json.loads(tool_args)
-                            except json.JSONDecodeError:
-                                tool_args = {}
-                        import uuid
+                        if fc:
+                            tool_name = fc.get("name")
+                            tool_args = fc.get("args", {})
+                            if isinstance(tool_args, str):
+                                try:
+                                    tool_args = json.loads(tool_args)
+                                except json.JSONDecodeError:
+                                    tool_args = {}
+                            import uuid
 
-                        tool_call_id = f"call_{uuid.uuid4().hex[:8]}"
+                            tool_call_id = f"call_{uuid.uuid4().hex[:8]}"
 
-        if think_started:
-            yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
-        if text_started:
-            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
-        if tool_name and tool_call_id:
-            yield LLMStreamEvent(
-                type=LLMStreamEventType.TOOL_CALL,
-                tool_call=ToolCall(id=tool_call_id, name=tool_name, params=tool_args),
-                usage=usage,
-                thinking=Thinking(content="", signature=thought_signature)
-                if thought_signature
-                else None,
-            )
+            if think_started:
+                yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
+            if text_started:
+                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+            if tool_name and tool_call_id:
+                yield LLMStreamEvent(
+                    type=LLMStreamEventType.TOOL_CALL,
+                    tool_call=ToolCall(id=tool_call_id, name=tool_name, params=tool_args),
+                    usage=usage,
+                    thinking=Thinking(content="", signature=thought_signature)
+                    if thought_signature
+                    else None,
+                )
+        except Exception as e:
+            logger.error(f"LLM stream error | {e}")
+            yield LLMStreamEvent(type=LLMStreamEventType.ERROR, content=str(e))
 
     def get_metadata(self) -> Metadata:
         context_windows = {

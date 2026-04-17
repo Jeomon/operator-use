@@ -12,11 +12,13 @@ class LLMStreamEventType(str, Enum):
     THINK_START = "think_start"
     THINK_DELTA = "think_delta"
     THINK_END = "think_end"
+    ERROR = "error"
 
 
 class LLMEventType(str, Enum):
     TEXT = "text"
     TOOL_CALL = "tool_call"
+    ERROR = "error"
 
 
 class Thinking(BaseModel):
@@ -46,3 +48,4 @@ class LLMEvent(BaseModel):
     content: str | None = None
     tool_call: ToolCall | None = None
     usage: TokenUsage | None = None
+    error: str | None = None

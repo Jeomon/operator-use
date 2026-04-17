@@ -479,52 +479,56 @@ class ChatAnthropic(BaseChatLLM):
         structured_output: BaseModel | None = None,
         json_mode: bool = False,
     ) -> LLMEvent:
-        system_prompt, anthropic_messages = self._convert_messages(messages)
-        anthropic_tools = self._convert_tools(tools) if tools else None
-        params = self._build_params(anthropic_messages, system_prompt, anthropic_tools)
+        try:
+            system_prompt, anthropic_messages = self._convert_messages(messages)
+            anthropic_tools = self._convert_tools(tools) if tools else None
+            params = self._build_params(anthropic_messages, system_prompt, anthropic_tools)
 
-        if structured_output:
-            structured_tool = {
-                "name": "record_result",
-                "description": f"Record the structured result: {structured_output.__name__}",
-                "input_schema": structured_output.model_json_schema(),
-            }
+            if structured_output:
+                structured_tool = {
+                    "name": "record_result",
+                    "description": f"Record the structured result: {structured_output.__name__}",
+                    "input_schema": structured_output.model_json_schema(),
+                }
 
-            if self.enable_prompt_caching and self.cache_tools:
-                structured_tool["cache_control"] = {"type": "ephemeral"}
+                if self.enable_prompt_caching and self.cache_tools:
+                    structured_tool["cache_control"] = {"type": "ephemeral"}
 
-            params["tools"] = [structured_tool]
-            params["tool_choice"] = {"type": "tool", "name": "record_result"}
-            # Forced tool_choice is incompatible with extended thinking
-            params.pop("thinking", None)
+                params["tools"] = [structured_tool]
+                params["tool_choice"] = {"type": "tool", "name": "record_result"}
+                # Forced tool_choice is incompatible with extended thinking
+                params.pop("thinking", None)
+
+                response = await self.aclient.messages.create(**params)
+                tool_use = next(b for b in response.content if b.type == "tool_use")
+                parsed = structured_output(**tool_use.input)
+
+                cache_creation_tokens = (
+                    getattr(response.usage, "cache_creation_input_tokens", None) or 0
+                )
+                cache_read_tokens = getattr(response.usage, "cache_read_input_tokens", None) or 0
+
+                usage = TokenUsage(
+                    prompt_tokens=response.usage.input_tokens,
+                    completion_tokens=response.usage.output_tokens,
+                    total_tokens=response.usage.input_tokens + response.usage.output_tokens,
+                    thinking_tokens=getattr(response.usage, "thinking_tokens", None),
+                    cache_creation_input_tokens=cache_creation_tokens or None,
+                    cache_read_input_tokens=cache_read_tokens or None,
+                )
+
+                content = parsed.model_dump() if hasattr(parsed, "model_dump") else str(parsed)
+                return LLMEvent(
+                    type=LLMEventType.TEXT,
+                    content=json.dumps(content) if isinstance(content, dict) else content,
+                    usage=usage,
+                )
 
             response = await self.aclient.messages.create(**params)
-            tool_use = next(b for b in response.content if b.type == "tool_use")
-            parsed = structured_output(**tool_use.input)
-
-            cache_creation_tokens = (
-                getattr(response.usage, "cache_creation_input_tokens", None) or 0
-            )
-            cache_read_tokens = getattr(response.usage, "cache_read_input_tokens", None) or 0
-
-            usage = TokenUsage(
-                prompt_tokens=response.usage.input_tokens,
-                completion_tokens=response.usage.output_tokens,
-                total_tokens=response.usage.input_tokens + response.usage.output_tokens,
-                thinking_tokens=getattr(response.usage, "thinking_tokens", None),
-                cache_creation_input_tokens=cache_creation_tokens or None,
-                cache_read_input_tokens=cache_read_tokens or None,
-            )
-
-            content = parsed.model_dump() if hasattr(parsed, "model_dump") else str(parsed)
-            return LLMEvent(
-                type=LLMEventType.TEXT,
-                content=json.dumps(content) if isinstance(content, dict) else content,
-                usage=usage,
-            )
-
-        response = await self.aclient.messages.create(**params)
-        return self._process_response(response)
+            return self._process_response(response)
+        except Exception as e:
+            logger.error(f"LLM error | {e}")
+            return LLMEvent(type=LLMEventType.ERROR, error=str(e))
 
     @overload
     def stream(
@@ -617,64 +621,68 @@ class ChatAnthropic(BaseChatLLM):
         structured_output: BaseModel | None = None,
         json_mode: bool = False,
     ) -> AsyncIterator[LLMStreamEvent]:
-        system_prompt, anthropic_messages = self._convert_messages(messages)
-        anthropic_tools = self._convert_tools(tools) if tools else None
-        params = self._build_params(anthropic_messages, system_prompt, anthropic_tools)
+        try:
+            system_prompt, anthropic_messages = self._convert_messages(messages)
+            anthropic_tools = self._convert_tools(tools) if tools else None
+            params = self._build_params(anthropic_messages, system_prompt, anthropic_tools)
 
-        text_started = False
-        think_started = False
-        usage = None
+            text_started = False
+            think_started = False
+            usage = None
 
-        async with self.aclient.messages.stream(**params) as stream:
-            async for event in stream:
-                if event.type == "thinking":
-                    if not think_started:
-                        think_started = True
-                        yield LLMStreamEvent(type=LLMStreamEventType.THINK_START)
-                    yield LLMStreamEvent(
-                        type=LLMStreamEventType.THINK_DELTA, content=event.thinking
+            async with self.aclient.messages.stream(**params) as stream:
+                async for event in stream:
+                    if event.type == "thinking":
+                        if not think_started:
+                            think_started = True
+                            yield LLMStreamEvent(type=LLMStreamEventType.THINK_START)
+                        yield LLMStreamEvent(
+                            type=LLMStreamEventType.THINK_DELTA, content=event.thinking
+                        )
+                    elif event.type == "text":
+                        if think_started:
+                            yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
+                            think_started = False
+                        if not text_started:
+                            text_started = True
+                            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
+                        yield LLMStreamEvent(type=LLMStreamEventType.TEXT_DELTA, content=event.text)
+
+                if think_started:
+                    yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
+
+                # Extract usage from final message
+                final_message = await stream.get_final_message()
+                if final_message.usage:
+                    cache_creation = (
+                        getattr(final_message.usage, "cache_creation_input_tokens", None) or 0
                     )
-                elif event.type == "text":
-                    if think_started:
-                        yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
-                        think_started = False
-                    if not text_started:
-                        text_started = True
-                        yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
-                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_DELTA, content=event.text)
+                    cache_read = getattr(final_message.usage, "cache_read_input_tokens", None) or 0
+                    usage = TokenUsage(
+                        prompt_tokens=final_message.usage.input_tokens,
+                        completion_tokens=final_message.usage.output_tokens,
+                        total_tokens=final_message.usage.input_tokens
+                        + final_message.usage.output_tokens,
+                        thinking_tokens=getattr(final_message.usage, "thinking_tokens", None),
+                        cache_creation_input_tokens=cache_creation or None,
+                        cache_read_input_tokens=cache_read or None,
+                    )
 
-            if think_started:
-                yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
-
-            # Extract usage from final message
-            final_message = await stream.get_final_message()
-            if final_message.usage:
-                cache_creation = (
-                    getattr(final_message.usage, "cache_creation_input_tokens", None) or 0
-                )
-                cache_read = getattr(final_message.usage, "cache_read_input_tokens", None) or 0
-                usage = TokenUsage(
-                    prompt_tokens=final_message.usage.input_tokens,
-                    completion_tokens=final_message.usage.output_tokens,
-                    total_tokens=final_message.usage.input_tokens
-                    + final_message.usage.output_tokens,
-                    thinking_tokens=getattr(final_message.usage, "thinking_tokens", None),
-                    cache_creation_input_tokens=cache_creation or None,
-                    cache_read_input_tokens=cache_read or None,
-                )
-
-            final_content = self._process_response(final_message)
-            if final_content.type == LLMEventType.TOOL_CALL:
-                yield LLMStreamEvent(
-                    type=LLMStreamEventType.TOOL_CALL,
-                    tool_call=final_content.tool_call,
-                    thinking=final_content.thinking,
-                    usage=final_content.usage,
-                )
-            elif text_started:
-                yield LLMStreamEvent(
-                    type=LLMStreamEventType.TEXT_END, thinking=final_content.thinking, usage=usage
-                )
+                final_content = self._process_response(final_message)
+                if final_content.type == LLMEventType.TOOL_CALL:
+                    yield LLMStreamEvent(
+                        type=LLMStreamEventType.TOOL_CALL,
+                        tool_call=final_content.tool_call,
+                        thinking=final_content.thinking,
+                        usage=final_content.usage,
+                    )
+                elif text_started:
+                    yield LLMStreamEvent(
+                        type=LLMStreamEventType.TEXT_END, thinking=final_content.thinking, usage=usage
+                    )
+        except Exception as e:
+            logger.error(f"LLM stream error | {e}")
+            yield LLMStreamEvent(type=LLMStreamEventType.ERROR, content=str(e))
 
     def get_metadata(self) -> Metadata:
         context_window = self.MODELS.get(self._model, 200000)

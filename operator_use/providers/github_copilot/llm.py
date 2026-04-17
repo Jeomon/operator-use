@@ -342,24 +342,28 @@ class ChatGitHubCopilot(BaseChatLLM):
         structured_output=None,
         json_mode: bool = False,
     ) -> LLMEvent:
-        token = await self._async_get_token()
-        url = self._base_url + CHAT_PATH
-        chunks: list[dict] = []
+        try:
+            token = await self._async_get_token()
+            url = self._base_url + CHAT_PATH
+            chunks: list[dict] = []
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            async with client.stream(
-                "POST",
-                url,
-                headers=self._headers(token),
-                json=self._body(messages, tools, stream=True),
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    chunk = _parse_sse(line)
-                    if chunk:
-                        chunks.append(chunk)
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                async with client.stream(
+                    "POST",
+                    url,
+                    headers=self._headers(token),
+                    json=self._body(messages, tools, stream=True),
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        chunk = _parse_sse(line)
+                        if chunk:
+                            chunks.append(chunk)
 
-        return _extract_final(chunks)
+            return _extract_final(chunks)
+        except Exception as e:
+            logger.error(f"LLM error | {e}")
+            return LLMEvent(type=LLMEventType.ERROR, error=str(e))
 
     def stream(
         self,
@@ -436,66 +440,70 @@ class ChatGitHubCopilot(BaseChatLLM):
         structured_output=None,
         json_mode: bool = False,
     ) -> AsyncIterator[LLMStreamEvent]:
-        token = await self._async_get_token()
-        url = self._base_url + CHAT_PATH
+        try:
+            token = await self._async_get_token()
+            url = self._base_url + CHAT_PATH
 
-        tool_name: Optional[str] = None
-        tool_call_id: Optional[str] = None
-        tool_args = ""
-        text_started = False
-        usage = None
+            tool_name: Optional[str] = None
+            tool_call_id: Optional[str] = None
+            tool_args = ""
+            text_started = False
+            usage = None
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            async with client.stream(
-                "POST",
-                url,
-                headers=self._headers(token),
-                json=self._body(messages, tools, stream=True),
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    chunk = _parse_sse(line)
-                    if not chunk:
-                        continue
-                    for choice in chunk.get("choices", []):
-                        delta = choice.get("delta", {})
-                        content = delta.get("content")
-                        if content:
-                            if not text_started:
-                                text_started = True
-                                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
-                            yield LLMStreamEvent(
-                                type=LLMStreamEventType.TEXT_DELTA, content=content
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                async with client.stream(
+                    "POST",
+                    url,
+                    headers=self._headers(token),
+                    json=self._body(messages, tools, stream=True),
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        chunk = _parse_sse(line)
+                        if not chunk:
+                            continue
+                        for choice in chunk.get("choices", []):
+                            delta = choice.get("delta", {})
+                            content = delta.get("content")
+                            if content:
+                                if not text_started:
+                                    text_started = True
+                                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
+                                yield LLMStreamEvent(
+                                    type=LLMStreamEventType.TEXT_DELTA, content=content
+                                )
+                            for tc in delta.get("tool_calls", []):
+                                if tc.get("id"):
+                                    tool_call_id = tc["id"]
+                                fn = tc.get("function", {})
+                                if fn.get("name"):
+                                    tool_name = fn["name"]
+                                if fn.get("arguments"):
+                                    tool_args += fn["arguments"]
+                        if chunk.get("usage"):
+                            u = chunk["usage"]
+                            usage = TokenUsage(
+                                prompt_tokens=u.get("prompt_tokens", 0),
+                                completion_tokens=u.get("completion_tokens", 0),
+                                total_tokens=u.get("total_tokens", 0),
                             )
-                        for tc in delta.get("tool_calls", []):
-                            if tc.get("id"):
-                                tool_call_id = tc["id"]
-                            fn = tc.get("function", {})
-                            if fn.get("name"):
-                                tool_name = fn["name"]
-                            if fn.get("arguments"):
-                                tool_args += fn["arguments"]
-                    if chunk.get("usage"):
-                        u = chunk["usage"]
-                        usage = TokenUsage(
-                            prompt_tokens=u.get("prompt_tokens", 0),
-                            completion_tokens=u.get("completion_tokens", 0),
-                            total_tokens=u.get("total_tokens", 0),
-                        )
 
-        if text_started:
-            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+            if text_started:
+                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
 
-        if tool_name and tool_call_id:
-            try:
-                params = json.loads(tool_args)
-            except json.JSONDecodeError:
-                params = {}
-            yield LLMStreamEvent(
-                type=LLMStreamEventType.TOOL_CALL,
-                tool_call=ToolCall(id=tool_call_id, name=tool_name, params=params),
-                usage=usage,
-            )
+            if tool_name and tool_call_id:
+                try:
+                    params = json.loads(tool_args)
+                except json.JSONDecodeError:
+                    params = {}
+                yield LLMStreamEvent(
+                    type=LLMStreamEventType.TOOL_CALL,
+                    tool_call=ToolCall(id=tool_call_id, name=tool_name, params=params),
+                    usage=usage,
+                )
+        except Exception as e:
+            logger.error(f"LLM stream error | {e}")
+            yield LLMStreamEvent(type=LLMStreamEventType.ERROR, content=str(e))
 
     def get_metadata(self) -> Metadata:
         return Metadata(name=self._model, context_window=128_000, owned_by="github")

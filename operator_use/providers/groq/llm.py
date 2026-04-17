@@ -306,62 +306,66 @@ class ChatGroq(BaseChatLLM):
         structured_output: BaseModel | None = None,
         json_mode: bool = False,
     ) -> LLMEvent:
-        groq_messages = self._convert_messages(messages)
-        groq_tools = self._convert_tools(tools) if tools else None
+        try:
+            groq_messages = self._convert_messages(messages)
+            groq_tools = self._convert_tools(tools) if tools else None
 
-        params = {"model": self._model, "messages": groq_messages, **self.kwargs}
+            params = {"model": self._model, "messages": groq_messages, **self.kwargs}
 
-        if groq_tools:
-            params["tools"] = groq_tools
-        if self._is_reasoning_model():
-            if "qwen" in self._model.lower():
-                params["reasoning_format"] = "parsed"
-            else:
-                params["include_reasoning"] = True
-
-        if self.temperature is not None:
-            params["temperature"] = self.temperature
-
-        if structured_output:
-            params["response_format"] = {"type": "json_object"}
-        elif json_mode:
-            params["response_format"] = {"type": "json_object"}
-
-        response = await self.aclient.chat.completions.create(**params)
-
-        if structured_output:
-            try:
-                content_text = response.choices[0].message.content
-                if content_text:
-                    parsed = structured_output.model_validate_json(content_text)
+            if groq_tools:
+                params["tools"] = groq_tools
+            if self._is_reasoning_model():
+                if "qwen" in self._model.lower():
+                    params["reasoning_format"] = "parsed"
                 else:
-                    parsed = structured_output()
+                    params["include_reasoning"] = True
 
-                content = parsed.model_dump() if hasattr(parsed, "model_dump") else str(parsed)
-                thinking_tokens = None
-                if (
-                    response.usage
-                    and hasattr(response.usage, "completion_tokens_details")
-                    and response.usage.completion_tokens_details
-                ):
-                    thinking_tokens = getattr(
-                        response.usage.completion_tokens_details, "reasoning_tokens", None
-                    ) or getattr(response.usage.completion_tokens_details, "thinking_tokens", None)
-                usage = TokenUsage(
-                    prompt_tokens=response.usage.prompt_tokens if response.usage else 0,
-                    completion_tokens=response.usage.completion_tokens if response.usage else 0,
-                    total_tokens=response.usage.total_tokens if response.usage else 0,
-                    thinking_tokens=thinking_tokens,
-                )
-                return LLMEvent(
-                    type=LLMEventType.TEXT,
-                    content=json.dumps(content) if isinstance(content, dict) else content,
-                    usage=usage,
-                )
-            except (json.JSONDecodeError, ValueError) as e:
-                logger.error(f"Failed to parse structured output: {e}")
+            if self.temperature is not None:
+                params["temperature"] = self.temperature
 
-        return self._process_response(response)
+            if structured_output:
+                params["response_format"] = {"type": "json_object"}
+            elif json_mode:
+                params["response_format"] = {"type": "json_object"}
+
+            response = await self.aclient.chat.completions.create(**params)
+
+            if structured_output:
+                try:
+                    content_text = response.choices[0].message.content
+                    if content_text:
+                        parsed = structured_output.model_validate_json(content_text)
+                    else:
+                        parsed = structured_output()
+
+                    content = parsed.model_dump() if hasattr(parsed, "model_dump") else str(parsed)
+                    thinking_tokens = None
+                    if (
+                        response.usage
+                        and hasattr(response.usage, "completion_tokens_details")
+                        and response.usage.completion_tokens_details
+                    ):
+                        thinking_tokens = getattr(
+                            response.usage.completion_tokens_details, "reasoning_tokens", None
+                        ) or getattr(response.usage.completion_tokens_details, "thinking_tokens", None)
+                    usage = TokenUsage(
+                        prompt_tokens=response.usage.prompt_tokens if response.usage else 0,
+                        completion_tokens=response.usage.completion_tokens if response.usage else 0,
+                        total_tokens=response.usage.total_tokens if response.usage else 0,
+                        thinking_tokens=thinking_tokens,
+                    )
+                    return LLMEvent(
+                        type=LLMEventType.TEXT,
+                        content=json.dumps(content) if isinstance(content, dict) else content,
+                        usage=usage,
+                    )
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.error(f"Failed to parse structured output: {e}")
+
+            return self._process_response(response)
+        except Exception as e:
+            logger.error(f"LLM error | {e}")
+            return LLMEvent(type=LLMEventType.ERROR, error=str(e))
 
     @overload
     def stream(
@@ -493,103 +497,107 @@ class ChatGroq(BaseChatLLM):
         structured_output: BaseModel | None = None,
         json_mode: bool = False,
     ) -> AsyncIterator[LLMStreamEvent]:
-        groq_messages = self._convert_messages(messages)
-        groq_tools = self._convert_tools(tools) if tools else None
+        try:
+            groq_messages = self._convert_messages(messages)
+            groq_tools = self._convert_tools(tools) if tools else None
 
-        params = {"model": self._model, "messages": groq_messages, "stream": True, **self.kwargs}
+            params = {"model": self._model, "messages": groq_messages, "stream": True, **self.kwargs}
 
-        if groq_tools:
-            params["tools"] = groq_tools
-        if self._is_reasoning_model():
-            if "qwen" in self._model.lower():
-                params["reasoning_format"] = "parsed"
+            if groq_tools:
+                params["tools"] = groq_tools
+            if self._is_reasoning_model():
+                if "qwen" in self._model.lower():
+                    params["reasoning_format"] = "parsed"
+                else:
+                    params["include_reasoning"] = True
+
+            if self.temperature is not None:
+                params["temperature"] = self.temperature
+
+            if json_mode:
+                params["response_format"] = {"type": "json_object"}
+
+            response = await self.aclient.chat.completions.create(**params)
+
+            # Accumulators for streamed tool calls
+            tool_call_id = None
+            tool_call_name = None
+            tool_call_args = ""
+            usage = None
+
+            text_started = False
+            think_started = False
+
+            async for chunk in response:
+                if not chunk.choices:
+                    if chunk.usage:
+                        thinking_tokens = getattr(
+                            getattr(chunk.usage, "completion_tokens_details", None),
+                            "reasoning_tokens",
+                            None,
+                        ) or getattr(
+                            getattr(chunk.usage, "completion_tokens_details", None),
+                            "thinking_tokens",
+                            None,
+                        )
+                        usage = TokenUsage(
+                            prompt_tokens=chunk.usage.prompt_tokens,
+                            completion_tokens=chunk.usage.completion_tokens,
+                            total_tokens=chunk.usage.total_tokens,
+                            thinking_tokens=thinking_tokens,
+                        )
+                    continue
+
+                delta = chunk.choices[0].delta
+
+                reasoning_delta = getattr(delta, "reasoning", None) or getattr(
+                    delta, "reasoning_content", None
+                )
+                if reasoning_delta:
+                    if not think_started:
+                        think_started = True
+                        yield LLMStreamEvent(type=LLMStreamEventType.THINK_START)
+                    yield LLMStreamEvent(type=LLMStreamEventType.THINK_DELTA, content=reasoning_delta)
+                if delta.content:
+                    if think_started:
+                        yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
+                        think_started = False
+                    if not text_started:
+                        text_started = True
+                        yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
+                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_DELTA, content=delta.content)
+
+                # Accumulate tool call deltas
+                if hasattr(delta, "tool_calls") and delta.tool_calls:
+                    tc_delta = delta.tool_calls[0]
+                    if tc_delta.id:
+                        tool_call_id = tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            tool_call_name = tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            tool_call_args += tc_delta.function.arguments
+
+            # Yield accumulated tool call as final response
+            if tool_call_id and tool_call_name:
+                try:
+                    params = json.loads(tool_call_args)
+                except json.JSONDecodeError:
+                    params = {}
+
+                yield LLMStreamEvent(
+                    type=LLMStreamEventType.TOOL_CALL,
+                    tool_call=ToolCall(id=tool_call_id, name=tool_call_name, params=params),
+                    usage=usage,
+                )
             else:
-                params["include_reasoning"] = True
-
-        if self.temperature is not None:
-            params["temperature"] = self.temperature
-
-        if json_mode:
-            params["response_format"] = {"type": "json_object"}
-
-        response = await self.aclient.chat.completions.create(**params)
-
-        # Accumulators for streamed tool calls
-        tool_call_id = None
-        tool_call_name = None
-        tool_call_args = ""
-        usage = None
-
-        text_started = False
-        think_started = False
-
-        async for chunk in response:
-            if not chunk.choices:
-                if chunk.usage:
-                    thinking_tokens = getattr(
-                        getattr(chunk.usage, "completion_tokens_details", None),
-                        "reasoning_tokens",
-                        None,
-                    ) or getattr(
-                        getattr(chunk.usage, "completion_tokens_details", None),
-                        "thinking_tokens",
-                        None,
-                    )
-                    usage = TokenUsage(
-                        prompt_tokens=chunk.usage.prompt_tokens,
-                        completion_tokens=chunk.usage.completion_tokens,
-                        total_tokens=chunk.usage.total_tokens,
-                        thinking_tokens=thinking_tokens,
-                    )
-                continue
-
-            delta = chunk.choices[0].delta
-
-            reasoning_delta = getattr(delta, "reasoning", None) or getattr(
-                delta, "reasoning_content", None
-            )
-            if reasoning_delta:
-                if not think_started:
-                    think_started = True
-                    yield LLMStreamEvent(type=LLMStreamEventType.THINK_START)
-                yield LLMStreamEvent(type=LLMStreamEventType.THINK_DELTA, content=reasoning_delta)
-            if delta.content:
                 if think_started:
                     yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
-                    think_started = False
-                if not text_started:
-                    text_started = True
-                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
-                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_DELTA, content=delta.content)
-
-            # Accumulate tool call deltas
-            if hasattr(delta, "tool_calls") and delta.tool_calls:
-                tc_delta = delta.tool_calls[0]
-                if tc_delta.id:
-                    tool_call_id = tc_delta.id
-                if tc_delta.function:
-                    if tc_delta.function.name:
-                        tool_call_name = tc_delta.function.name
-                    if tc_delta.function.arguments:
-                        tool_call_args += tc_delta.function.arguments
-
-        # Yield accumulated tool call as final response
-        if tool_call_id and tool_call_name:
-            try:
-                params = json.loads(tool_call_args)
-            except json.JSONDecodeError:
-                params = {}
-
-            yield LLMStreamEvent(
-                type=LLMStreamEventType.TOOL_CALL,
-                tool_call=ToolCall(id=tool_call_id, name=tool_call_name, params=params),
-                usage=usage,
-            )
-        else:
-            if think_started:
-                yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
-            if text_started:
-                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+                if text_started:
+                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+        except Exception as e:
+            logger.error(f"LLM stream error | {e}")
+            yield LLMStreamEvent(type=LLMStreamEventType.ERROR, content=str(e))
 
     def get_metadata(self) -> Metadata:
         context_window = self.MODELS.get(self._model, 131072)

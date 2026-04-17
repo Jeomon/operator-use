@@ -294,57 +294,61 @@ class ChatVLLM(BaseChatLLM):
         structured_output: BaseModel | None = None,
         json_mode: bool = False,
     ) -> LLMEvent:
-        openai_messages = self._convert_messages(messages)
-        openai_tools = self._convert_tools(tools) if tools else None
+        try:
+            openai_messages = self._convert_messages(messages)
+            openai_tools = self._convert_tools(tools) if tools else None
 
-        params = {
-            "model": self._model,
-            "messages": openai_messages,
-            **self.kwargs,
-        }
-
-        if openai_tools:
-            params["tools"] = openai_tools
-
-        if self.temperature is not None:
-            params["temperature"] = self.temperature
-
-        if structured_output:
-            params["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": structured_output.__name__,
-                    "schema": structured_output.model_json_schema(),
-                },
+            params = {
+                "model": self._model,
+                "messages": openai_messages,
+                **self.kwargs,
             }
-            params.pop("tools", None)
+
+            if openai_tools:
+                params["tools"] = openai_tools
+
+            if self.temperature is not None:
+                params["temperature"] = self.temperature
+
+            if structured_output:
+                params["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": structured_output.__name__,
+                        "schema": structured_output.model_json_schema(),
+                    },
+                }
+                params.pop("tools", None)
+
+                response = await self.aclient.chat.completions.create(**params)
+                usage = self._extract_usage(response.usage)
+
+                try:
+                    parsed = structured_output.model_validate_json(response.choices[0].message.content)
+                    content_dump = parsed.model_dump()
+                    return LLMEvent(
+                        type=LLMEventType.TEXT,
+                        content=json.dumps(content_dump)
+                        if isinstance(content_dump, dict)
+                        else str(content_dump),
+                        usage=usage,
+                    )
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.error(f"Failed to parse structured output: {e}")
+                    return LLMEvent(
+                        type=LLMEventType.TEXT,
+                        content=response.choices[0].message.content or "",
+                        usage=usage,
+                    )
+
+            if json_mode:
+                params["response_format"] = {"type": "json_object"}
 
             response = await self.aclient.chat.completions.create(**params)
-            usage = self._extract_usage(response.usage)
-
-            try:
-                parsed = structured_output.model_validate_json(response.choices[0].message.content)
-                content_dump = parsed.model_dump()
-                return LLMEvent(
-                    type=LLMEventType.TEXT,
-                    content=json.dumps(content_dump)
-                    if isinstance(content_dump, dict)
-                    else str(content_dump),
-                    usage=usage,
-                )
-            except (json.JSONDecodeError, ValueError) as e:
-                logger.error(f"Failed to parse structured output: {e}")
-                return LLMEvent(
-                    type=LLMEventType.TEXT,
-                    content=response.choices[0].message.content or "",
-                    usage=usage,
-                )
-
-        if json_mode:
-            params["response_format"] = {"type": "json_object"}
-
-        response = await self.aclient.chat.completions.create(**params)
-        return self._process_response(response)
+            return self._process_response(response)
+        except Exception as e:
+            logger.error(f"LLM error | {e}")
+            return LLMEvent(type=LLMEventType.ERROR, error=str(e))
 
     @overload
     def stream(
@@ -465,92 +469,96 @@ class ChatVLLM(BaseChatLLM):
         structured_output: BaseModel | None = None,
         json_mode: bool = False,
     ) -> AsyncIterator[LLMStreamEvent]:
-        openai_messages = self._convert_messages(messages)
-        openai_tools = self._convert_tools(tools) if tools else None
+        try:
+            openai_messages = self._convert_messages(messages)
+            openai_tools = self._convert_tools(tools) if tools else None
 
-        params = {
-            "model": self._model,
-            "messages": openai_messages,
-            "stream": True,
-            "stream_options": {"include_usage": True},
-            **self.kwargs,
-        }
+            params = {
+                "model": self._model,
+                "messages": openai_messages,
+                "stream": True,
+                "stream_options": {"include_usage": True},
+                **self.kwargs,
+            }
 
-        if openai_tools:
-            params["tools"] = openai_tools
+            if openai_tools:
+                params["tools"] = openai_tools
 
-        if self.temperature is not None:
-            params["temperature"] = self.temperature
+            if self.temperature is not None:
+                params["temperature"] = self.temperature
 
-        if json_mode:
-            params["response_format"] = {"type": "json_object"}
+            if json_mode:
+                params["response_format"] = {"type": "json_object"}
 
-        response = await self.aclient.chat.completions.create(**params)
+            response = await self.aclient.chat.completions.create(**params)
 
-        tool_call_id = None
-        tool_call_name = None
-        tool_call_args = ""
-        usage = None
+            tool_call_id = None
+            tool_call_name = None
+            tool_call_args = ""
+            usage = None
 
-        text_started = False
-        think_started = False
+            text_started = False
+            think_started = False
 
-        async for chunk in response:
-            if not chunk.choices:
-                if chunk.usage:
-                    usage = self._extract_usage(chunk.usage)
-                continue
+            async for chunk in response:
+                if not chunk.choices:
+                    if chunk.usage:
+                        usage = self._extract_usage(chunk.usage)
+                    continue
 
-            delta = chunk.choices[0].delta
+                delta = chunk.choices[0].delta
 
-            reasoning_delta = getattr(delta, "reasoning", None) or getattr(
-                delta, "reasoning_content", None
-            )
-            if reasoning_delta:
-                if not think_started:
-                    think_started = True
-                    yield LLMStreamEvent(type=LLMStreamEventType.THINK_START)
-                yield LLMStreamEvent(type=LLMStreamEventType.THINK_DELTA, content=reasoning_delta)
-            if delta.content:
+                reasoning_delta = getattr(delta, "reasoning", None) or getattr(
+                    delta, "reasoning_content", None
+                )
+                if reasoning_delta:
+                    if not think_started:
+                        think_started = True
+                        yield LLMStreamEvent(type=LLMStreamEventType.THINK_START)
+                    yield LLMStreamEvent(type=LLMStreamEventType.THINK_DELTA, content=reasoning_delta)
+                if delta.content:
+                    if think_started:
+                        yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
+                        think_started = False
+                    if not text_started:
+                        text_started = True
+                        yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
+                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_DELTA, content=delta.content)
+
+                if hasattr(delta, "tool_calls") and delta.tool_calls:
+                    if think_started:
+                        yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
+                        think_started = False
+                    tc_delta = delta.tool_calls[0]
+                    if tc_delta.id:
+                        tool_call_id = tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            tool_call_name = tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            tool_call_args += tc_delta.function.arguments
+
+            if tool_call_id and tool_call_name:
                 if think_started:
                     yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
-                    think_started = False
-                if not text_started:
-                    text_started = True
-                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
-                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_DELTA, content=delta.content)
+                try:
+                    params = json.loads(tool_call_args)
+                except json.JSONDecodeError:
+                    params = {}
 
-            if hasattr(delta, "tool_calls") and delta.tool_calls:
+                yield LLMStreamEvent(
+                    type=LLMStreamEventType.TOOL_CALL,
+                    tool_call=ToolCall(id=tool_call_id, name=tool_call_name, params=params),
+                    usage=usage,
+                )
+            else:
                 if think_started:
                     yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
-                    think_started = False
-                tc_delta = delta.tool_calls[0]
-                if tc_delta.id:
-                    tool_call_id = tc_delta.id
-                if tc_delta.function:
-                    if tc_delta.function.name:
-                        tool_call_name = tc_delta.function.name
-                    if tc_delta.function.arguments:
-                        tool_call_args += tc_delta.function.arguments
-
-        if tool_call_id and tool_call_name:
-            if think_started:
-                yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
-            try:
-                params = json.loads(tool_call_args)
-            except json.JSONDecodeError:
-                params = {}
-
-            yield LLMStreamEvent(
-                type=LLMStreamEventType.TOOL_CALL,
-                tool_call=ToolCall(id=tool_call_id, name=tool_call_name, params=params),
-                usage=usage,
-            )
-        else:
-            if think_started:
-                yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
-            if text_started:
-                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+                if text_started:
+                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+        except Exception as e:
+            logger.error(f"LLM stream error | {e}")
+            yield LLMStreamEvent(type=LLMStreamEventType.ERROR, content=str(e))
 
     def get_metadata(self) -> Metadata:
         """Retrieve model metadata from the vLLM server."""

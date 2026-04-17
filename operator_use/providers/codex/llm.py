@@ -547,19 +547,23 @@ class ChatCodex(BaseChatLLM):
         structured_output=None,
         json_mode: bool = False,
     ) -> LLMEvent:
-        headers, body = await self._build_request_async(messages, tools)
-        url = self._base_url + CODEX_PATH
-        events: list[dict] = []
+        try:
+            headers, body = await self._build_request_async(messages, tools)
+            url = self._base_url + CODEX_PATH
+            events: list[dict] = []
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            async with client.stream("POST", url, headers=headers, json=body) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    event = _parse_sse_line(line)
-                    if event:
-                        events.append(event)
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                async with client.stream("POST", url, headers=headers, json=body) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        event = _parse_sse_line(line)
+                        if event:
+                            events.append(event)
 
-        return _extract_final(events)
+            return _extract_final(events)
+        except Exception as e:
+            logger.error(f"LLM error | {e}")
+            return LLMEvent(type=LLMEventType.ERROR, error=str(e))
 
     def stream(
         self,
@@ -635,70 +639,74 @@ class ChatCodex(BaseChatLLM):
         structured_output=None,
         json_mode: bool = False,
     ) -> AsyncIterator[LLMStreamEvent]:
-        headers, body = await self._build_request_async(messages, tools)
-        url = self._base_url + CODEX_PATH
+        try:
+            headers, body = await self._build_request_async(messages, tools)
+            url = self._base_url + CODEX_PATH
 
-        tool_name: Optional[str] = None
-        tool_call_id: Optional[str] = None
-        tool_args = ""
-        text_started = False
-        usage = None
+            tool_name: Optional[str] = None
+            tool_call_id: Optional[str] = None
+            tool_args = ""
+            text_started = False
+            usage = None
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            async with client.stream("POST", url, headers=headers, json=body) as response:
-                if response.status_code >= 400:
-                    error_body = await response.aread()
-                    logger.error(
-                        "Codex API error %s: %s", response.status_code, error_body.decode()
-                    )
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    event = _parse_sse_line(line)
-                    if not event:
-                        continue
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                async with client.stream("POST", url, headers=headers, json=body) as response:
+                    if response.status_code >= 400:
+                        error_body = await response.aread()
+                        logger.error(
+                            "Codex API error %s: %s", response.status_code, error_body.decode()
+                        )
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        event = _parse_sse_line(line)
+                        if not event:
+                            continue
 
-                    etype = event.get("type", "")
+                        etype = event.get("type", "")
 
-                    if etype == "response.output_text.delta":
-                        delta = event.get("delta", "")
-                        if delta:
-                            if not text_started:
-                                text_started = True
-                                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
-                            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_DELTA, content=delta)
+                        if etype == "response.output_text.delta":
+                            delta = event.get("delta", "")
+                            if delta:
+                                if not text_started:
+                                    text_started = True
+                                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
+                                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_DELTA, content=delta)
 
-                    elif etype == "response.output_item.added":
-                        item = event.get("item", {})
-                        if item.get("type") == "function_call":
-                            tool_name = item.get("name")
-                            tool_call_id = item.get("call_id") or item.get("id")
+                        elif etype == "response.output_item.added":
+                            item = event.get("item", {})
+                            if item.get("type") == "function_call":
+                                tool_name = item.get("name")
+                                tool_call_id = item.get("call_id") or item.get("id")
 
-                    elif etype == "response.function_call_arguments.delta":
-                        tool_args += event.get("delta", "")
+                        elif etype == "response.function_call_arguments.delta":
+                            tool_args += event.get("delta", "")
 
-                    elif etype == "response.completed":
-                        resp = event.get("response", {})
-                        usage_data = resp.get("usage", {})
-                        if usage_data:
-                            usage = TokenUsage(
-                                prompt_tokens=usage_data.get("input_tokens", 0),
-                                completion_tokens=usage_data.get("output_tokens", 0),
-                                total_tokens=usage_data.get("total_tokens", 0),
-                            )
+                        elif etype == "response.completed":
+                            resp = event.get("response", {})
+                            usage_data = resp.get("usage", {})
+                            if usage_data:
+                                usage = TokenUsage(
+                                    prompt_tokens=usage_data.get("input_tokens", 0),
+                                    completion_tokens=usage_data.get("output_tokens", 0),
+                                    total_tokens=usage_data.get("total_tokens", 0),
+                                )
 
-        if text_started:
-            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+            if text_started:
+                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
 
-        if tool_name and tool_call_id:
-            try:
-                params = json.loads(tool_args)
-            except json.JSONDecodeError:
-                params = {}
-            yield LLMStreamEvent(
-                type=LLMStreamEventType.TOOL_CALL,
-                tool_call=ToolCall(id=tool_call_id, name=tool_name, params=params),
-                usage=usage,
-            )
+            if tool_name and tool_call_id:
+                try:
+                    params = json.loads(tool_args)
+                except json.JSONDecodeError:
+                    params = {}
+                yield LLMStreamEvent(
+                    type=LLMStreamEventType.TOOL_CALL,
+                    tool_call=ToolCall(id=tool_call_id, name=tool_name, params=params),
+                    usage=usage,
+                )
+        except Exception as e:
+            logger.error(f"LLM stream error | {e}")
+            yield LLMStreamEvent(type=LLMStreamEventType.ERROR, content=str(e))
 
     def get_metadata(self) -> Metadata:
         context_window = 128_000

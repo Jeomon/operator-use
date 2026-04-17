@@ -15,7 +15,7 @@ from operator_use.agent.context import Context
 from operator_use.agent.context.service import PromptMode
 from operator_use.agent.tools import ToolRegistry, BUILTIN_TOOLS
 from operator_use.bus import IncomingMessage
-from operator_use.providers.events import LLMEventType, LLMStreamEventType
+from operator_use.providers.events import LLMEvent, LLMEventType, LLMStreamEvent, LLMStreamEventType, Thinking
 from operator_use.session import SessionStore, Session
 from operator_use.subagent.manager import SubagentManager
 from operator_use.process import ProcessStore
@@ -431,7 +431,11 @@ class Agent:
             )
             messages = before_llm_ctx.messages
 
-            llm_event = await self.llm.ainvoke(messages=messages, tools=tools)
+            try:
+                llm_event = await self.llm.ainvoke(messages=messages, tools=tools)
+            except Exception as e:
+                logger.error(f"LLM call failed | {e}")
+                llm_event = LLMEvent(type=LLMEventType.ERROR, error=str(e))
 
             after_llm_ctx = await self.hooks.emit(
                 HookEvent.AFTER_LLM_CALL,
@@ -460,6 +464,12 @@ class Agent:
                     msg = AIMessage(
                         content=clean, thinking=thinking, thinking_signature=thinking_signature
                     )
+                    session.add_message(msg)
+                    return msg
+                case LLMEventType.ERROR:
+                    error_text = llm_event.error or "Unknown LLM error"
+                    logger.error(f"LLM error event | {error_text}")
+                    msg = AIMessage(content=f"Sorry, I encountered an error: {error_text}")
                     session.add_message(msg)
                     return msg
         raise RuntimeError(f"Agent exceeded max_iterations ({self.max_iterations})")
@@ -502,74 +512,85 @@ class Agent:
             )
             messages = before_llm_ctx.messages
 
-            async for event in self.llm.astream(messages=messages, tools=tools):
-                if event.thinking:
-                    thinking = event.thinking.content
-                    thinking_signature = event.thinking.signature
+            try:
+                async for event in self.llm.astream(messages=messages, tools=tools):
+                    if event.thinking:
+                        thinking = event.thinking.content
+                        thinking_signature = event.thinking.signature
 
-                match event.type:
-                    case LLMStreamEventType.TEXT_START:
-                        pass
-                    case LLMStreamEventType.TOOL_CALL:
-                        from operator_use.providers.events import LLMEvent, LLMEventType
-
-                        await self.hooks.emit(
-                            HookEvent.AFTER_LLM_CALL,
-                            AfterLLMCallContext(
-                                session=session,
-                                messages=messages,
-                                event=LLMEvent(
-                                    type=LLMEventType.TOOL_CALL, tool_call=event.tool_call
+                    match event.type:
+                        case LLMStreamEventType.TEXT_START:
+                            pass
+                        case LLMStreamEventType.TOOL_CALL:
+                            await self.hooks.emit(
+                                HookEvent.AFTER_LLM_CALL,
+                                AfterLLMCallContext(
+                                    session=session,
+                                    messages=messages,
+                                    event=LLMEvent(
+                                        type=LLMEventType.TOOL_CALL, tool_call=event.tool_call
+                                    ),
+                                    iteration=iteration,
                                 ),
-                                iteration=iteration,
-                            ),
-                        )
-                        tool_result, content = await self._execute_tool(
-                            event.tool_call, thinking, thinking_signature, session, error_messages
-                        )
-                        if tool_result.metadata and tool_result.metadata.get("stop_loop"):
-                            return AIMessage(content=content or "")
-                        break
-                    case LLMStreamEventType.TEXT_DELTA:
-                        if event.content:
-                            content += event.content
-                            if len(content) - last_publish_len >= chunk_size:
-                                await publish_stream(content, False, init=not stream_init_sent)
-                                stream_init_sent = True
-                                last_publish_len = len(content)
-                    case LLMStreamEventType.TEXT_END:
-                        logger.info(
-                            f"Response | {content[:120]!r}{'...' if len(content) > 120 else ''} usage={event.usage}"
-                        )
-                        content = self._clean_content(content or "(no response)")
-                        from operator_use.providers.events import LLMEvent, LLMEventType, Thinking
-
-                        await self.hooks.emit(
-                            HookEvent.AFTER_LLM_CALL,
-                            AfterLLMCallContext(
-                                session=session,
-                                messages=messages,
-                                event=LLMEvent(
-                                    type=LLMEventType.TEXT,
-                                    content=content,
-                                    thinking=Thinking(
-                                        content=thinking, signature=thinking_signature
-                                    )
-                                    if thinking
-                                    else None,
-                                    usage=event.usage,
+                            )
+                            tool_result, content = await self._execute_tool(
+                                event.tool_call, thinking, thinking_signature, session, error_messages
+                            )
+                            if tool_result.metadata and tool_result.metadata.get("stop_loop"):
+                                return AIMessage(content=content or "")
+                            break
+                        case LLMStreamEventType.TEXT_DELTA:
+                            if event.content:
+                                content += event.content
+                                if len(content) - last_publish_len >= chunk_size:
+                                    await publish_stream(content, False, init=not stream_init_sent)
+                                    stream_init_sent = True
+                                    last_publish_len = len(content)
+                        case LLMStreamEventType.ERROR:
+                            error_text = event.content or "Unknown LLM error"
+                            logger.error(f"LLM stream error | {error_text}")
+                            await publish_stream(f"Sorry, I encountered an error: {error_text}", True, init=not stream_init_sent)
+                            msg = AIMessage(content=f"Sorry, I encountered an error: {error_text}")
+                            session.add_message(msg)
+                            return msg
+                        case LLMStreamEventType.TEXT_END:
+                            logger.info(
+                                f"Response | {content[:120]!r}{'...' if len(content) > 120 else ''} usage={event.usage}"
+                            )
+                            content = self._clean_content(content or "(no response)")
+                            await self.hooks.emit(
+                                HookEvent.AFTER_LLM_CALL,
+                                AfterLLMCallContext(
+                                    session=session,
+                                    messages=messages,
+                                    event=LLMEvent(
+                                        type=LLMEventType.TEXT,
+                                        content=content,
+                                        thinking=Thinking(
+                                            content=thinking, signature=thinking_signature
+                                        )
+                                        if thinking
+                                        else None,
+                                        usage=event.usage,
+                                    ),
+                                    iteration=iteration,
                                 ),
-                                iteration=iteration,
-                            ),
-                        )
-                        if not stream_init_sent:
-                            await publish_stream(content, False, init=True)
-                        await publish_stream(content, True, init=False)
-                        msg = AIMessage(
-                            content=content,
-                            thinking=thinking,
-                            thinking_signature=thinking_signature,
-                        )
-                        session.add_message(msg)
-                        return msg
+                            )
+                            if not stream_init_sent:
+                                await publish_stream(content, False, init=True)
+                            await publish_stream(content, True, init=False)
+                            msg = AIMessage(
+                                content=content,
+                                thinking=thinking,
+                                thinking_signature=thinking_signature,
+                            )
+                            session.add_message(msg)
+                            return msg
+            except Exception as e:
+                logger.error(f"LLM stream failed | {e}")
+                error_text = str(e)
+                await publish_stream(f"Sorry, I encountered an error: {error_text}", True, init=not stream_init_sent)
+                msg = AIMessage(content=f"Sorry, I encountered an error: {error_text}")
+                session.add_message(msg)
+                return msg
         raise RuntimeError(f"Agent exceeded max_iterations ({self.max_iterations})")

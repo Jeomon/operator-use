@@ -232,48 +232,52 @@ class ChatOllama(BaseChatLLM):
         structured_output: BaseModel | None = None,
         json_mode: bool = False,
     ) -> LLMEvent:
-        ollama_messages = self._convert_messages(messages)
-        ollama_tools = self._convert_tools(tools) if tools else None
+        try:
+            ollama_messages = self._convert_messages(messages)
+            ollama_tools = self._convert_tools(tools) if tools else None
 
-        params = {"model": self._model, "messages": ollama_messages, **self.kwargs}
+            params = {"model": self._model, "messages": ollama_messages, **self.kwargs}
 
-        if ollama_tools:
-            params["tools"] = ollama_tools
-        if self._is_thinking_model():
-            params["think"] = True
+            if ollama_tools:
+                params["tools"] = ollama_tools
+            if self._is_thinking_model():
+                params["think"] = True
 
-        if self.temperature is not None:
-            if "options" not in params:
-                params["options"] = {}
-            params["options"]["temperature"] = self.temperature
+            if self.temperature is not None:
+                if "options" not in params:
+                    params["options"] = {}
+                params["options"]["temperature"] = self.temperature
 
-        if json_mode or structured_output:
-            params["format"] = (
-                "json" if not structured_output else structured_output.model_json_schema()
-            )
-
-        response = await self.aclient.chat(**params)
-
-        if structured_output:
-            try:
-                parsed = structured_output.model_validate_json(response["message"]["content"])
-                content = parsed.model_dump() if hasattr(parsed, "model_dump") else parsed
-                usage = TokenUsage(
-                    prompt_tokens=response.get("prompt_eval_count", 0),
-                    completion_tokens=response.get("eval_count", 0),
-                    total_tokens=response.get("prompt_eval_count", 0)
-                    + response.get("eval_count", 0),
-                    thinking_tokens=None,
+            if json_mode or structured_output:
+                params["format"] = (
+                    "json" if not structured_output else structured_output.model_json_schema()
                 )
-                return LLMEvent(
-                    type=LLMEventType.TEXT,
-                    content=json.dumps(content) if isinstance(content, dict) else content,
-                    usage=usage,
-                )
-            except (json.JSONDecodeError, ValueError) as e:
-                logger.error(f"Failed to parse structured output: {e}")
 
-        return self._process_response(response)
+            response = await self.aclient.chat(**params)
+
+            if structured_output:
+                try:
+                    parsed = structured_output.model_validate_json(response["message"]["content"])
+                    content = parsed.model_dump() if hasattr(parsed, "model_dump") else parsed
+                    usage = TokenUsage(
+                        prompt_tokens=response.get("prompt_eval_count", 0),
+                        completion_tokens=response.get("eval_count", 0),
+                        total_tokens=response.get("prompt_eval_count", 0)
+                        + response.get("eval_count", 0),
+                        thinking_tokens=None,
+                    )
+                    return LLMEvent(
+                        type=LLMEventType.TEXT,
+                        content=json.dumps(content) if isinstance(content, dict) else content,
+                        usage=usage,
+                    )
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.error(f"Failed to parse structured output: {e}")
+
+            return self._process_response(response)
+        except Exception as e:
+            logger.error(f"LLM error | {e}")
+            return LLMEvent(type=LLMEventType.ERROR, error=str(e))
 
     @overload
     def stream(
@@ -383,81 +387,85 @@ class ChatOllama(BaseChatLLM):
         structured_output: BaseModel | None = None,
         json_mode: bool = False,
     ) -> AsyncIterator[LLMStreamEvent]:
-        ollama_messages = self._convert_messages(messages)
-        ollama_tools = self._convert_tools(tools) if tools else None
+        try:
+            ollama_messages = self._convert_messages(messages)
+            ollama_tools = self._convert_tools(tools) if tools else None
 
-        params = {"model": self._model, "messages": ollama_messages, "stream": True, **self.kwargs}
+            params = {"model": self._model, "messages": ollama_messages, "stream": True, **self.kwargs}
 
-        if ollama_tools:
-            params["tools"] = ollama_tools
-        if self._is_thinking_model():
-            params["think"] = True
+            if ollama_tools:
+                params["tools"] = ollama_tools
+            if self._is_thinking_model():
+                params["think"] = True
 
-        if self.temperature is not None:
-            if "options" not in params:
-                params["options"] = {}
-            params["options"]["temperature"] = self.temperature
+            if self.temperature is not None:
+                if "options" not in params:
+                    params["options"] = {}
+                params["options"]["temperature"] = self.temperature
 
-        if json_mode:
-            params["format"] = "json"
+            if json_mode:
+                params["format"] = "json"
 
-        response = await self.aclient.chat(**params)
+            response = await self.aclient.chat(**params)
 
-        text_started = False
-        think_started = False
-        usage = None
+            text_started = False
+            think_started = False
+            usage = None
 
-        async for chunk in response:
-            message = chunk.get("message", {})
-            # Ollama may send usage in the final chunk
-            if "eval_count" in chunk or "prompt_eval_count" in chunk:
-                thinking = message.get("thinking")
-                thinking_tokens = max(1, len(thinking) // 4) if thinking else None
-                usage = TokenUsage(
-                    prompt_tokens=chunk.get("prompt_eval_count", 0),
-                    completion_tokens=chunk.get("eval_count", 0),
-                    total_tokens=chunk.get("prompt_eval_count", 0) + chunk.get("eval_count", 0),
-                    thinking_tokens=thinking_tokens,
-                )
-            if message.get("thinking"):
-                if not think_started:
-                    think_started = True
-                    yield LLMStreamEvent(type=LLMStreamEventType.THINK_START)
-                yield LLMStreamEvent(
-                    type=LLMStreamEventType.THINK_DELTA, content=message["thinking"]
-                )
-            if "content" in message and message["content"]:
-                if think_started:
-                    yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
-                    think_started = False
-                if not text_started:
-                    text_started = True
-                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
-                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_DELTA, content=message["content"])
+            async for chunk in response:
+                message = chunk.get("message", {})
+                # Ollama may send usage in the final chunk
+                if "eval_count" in chunk or "prompt_eval_count" in chunk:
+                    thinking = message.get("thinking")
+                    thinking_tokens = max(1, len(thinking) // 4) if thinking else None
+                    usage = TokenUsage(
+                        prompt_tokens=chunk.get("prompt_eval_count", 0),
+                        completion_tokens=chunk.get("eval_count", 0),
+                        total_tokens=chunk.get("prompt_eval_count", 0) + chunk.get("eval_count", 0),
+                        thinking_tokens=thinking_tokens,
+                    )
+                if message.get("thinking"):
+                    if not think_started:
+                        think_started = True
+                        yield LLMStreamEvent(type=LLMStreamEventType.THINK_START)
+                    yield LLMStreamEvent(
+                        type=LLMStreamEventType.THINK_DELTA, content=message["thinking"]
+                    )
+                if "content" in message and message["content"]:
+                    if think_started:
+                        yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
+                        think_started = False
+                    if not text_started:
+                        text_started = True
+                        yield LLMStreamEvent(type=LLMStreamEventType.TEXT_START)
+                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_DELTA, content=message["content"])
 
-            # Handle tool calls in stream
-            tool_calls = message.get("tool_calls", [])
-            if tool_calls:
-                tc = tool_calls[0]
-                func = tc.get("function", {})
-                args = func.get("arguments", {})
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args) if args else {}
-                    except json.JSONDecodeError:
-                        args = {}
-                yield LLMStreamEvent(
-                    type=LLMStreamEventType.TOOL_CALL,
-                    tool_call=ToolCall(
-                        id=f"call_{uuid.uuid4().hex[:8]}", name=func.get("name"), params=args
-                    ),
-                    usage=usage,
-                )
+                # Handle tool calls in stream
+                tool_calls = message.get("tool_calls", [])
+                if tool_calls:
+                    tc = tool_calls[0]
+                    func = tc.get("function", {})
+                    args = func.get("arguments", {})
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args) if args else {}
+                        except json.JSONDecodeError:
+                            args = {}
+                    yield LLMStreamEvent(
+                        type=LLMStreamEventType.TOOL_CALL,
+                        tool_call=ToolCall(
+                            id=f"call_{uuid.uuid4().hex[:8]}", name=func.get("name"), params=args
+                        ),
+                        usage=usage,
+                    )
 
-        if think_started:
-            yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
-        if text_started:
-            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+            if think_started:
+                yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
+            if text_started:
+                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+        except Exception as e:
+            logger.error(f"LLM stream error | {e}")
+            yield LLMStreamEvent(type=LLMStreamEventType.ERROR, content=str(e))
 
     def get_metadata(self) -> Metadata:
         return Metadata(
