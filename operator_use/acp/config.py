@@ -30,6 +30,10 @@ class ACPServerConfig:
     trusted_agents: dict = field(default_factory=dict)
     # Advertised base URL of this server (included in X-ACP-Agent-URL on responses)
     public_url: str = ""
+    # Device Authorization Grant (RFC 8628)
+    device_flow_enabled: bool = False
+    # Path to JSON file for persisting approved tokens (default: .operator_use/acp_tokens.json)
+    tokens_path: str = ""
 
 
 @dataclass

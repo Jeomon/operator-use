@@ -135,3 +135,31 @@ class RunOutputEvent(BaseModel):
     run_id: str
     part: MessagePart | None = None  # present when type == "output"
     error: str | None = None  # present when type == "error"
+
+
+# ---------------------------------------------------------------------------
+# Device Authorization Grant (RFC 8628)
+# ---------------------------------------------------------------------------
+
+
+class DeviceCodeResponse(BaseModel):
+    """POST /auth/device response."""
+
+    device_code: str
+    user_code: str          # short human-typeable code, e.g. "KQBG-MDJX"
+    verification_uri: str   # URL to open in browser
+    expires_in: int = 600   # seconds until device_code expires
+    interval: int = 5       # polling interval in seconds
+
+
+class TokenRequest(BaseModel):
+    """POST /auth/token body."""
+
+    device_code: str
+
+
+class TokenResponse(BaseModel):
+    """POST /auth/token success response."""
+
+    access_token: str
+    token_type: str = "bearer"
