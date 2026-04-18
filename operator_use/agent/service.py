@@ -18,7 +18,7 @@ from operator_use.bus import IncomingMessage
 from operator_use.providers.events import LLMEvent, LLMEventType, LLMStreamEvent, LLMStreamEventType, Thinking
 from operator_use.session import SessionStore, Session
 from operator_use.subagent.manager import SubagentManager
-from operator_use.process import ProcessStore
+from operator_use.process import ProcessManager
 from operator_use.agent.hooks import Hooks, HookEvent
 from operator_use.agent.hooks.events import (
     BeforeAgentStartContext,
@@ -91,7 +91,7 @@ class Agent:
         self.subagent_manager = SubagentManager(
             llm=llm, bus=bus, config=subagent_config, tracer=tracer
         )
-        self.process_store = ProcessStore()
+        self.process_store = ProcessManager()
         self.hooks = Hooks()
 
         # Register tracer hooks if provided

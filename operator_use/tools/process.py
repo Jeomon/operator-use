@@ -8,7 +8,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 from operator_use.tools import Tool, ToolResult, MAX_TOOL_OUTPUT_LENGTH
-from operator_use.process.service import list_os, kill_os
+from operator_use.process.manager import list_os, kill_os
 
 
 class Process(BaseModel):
@@ -88,7 +88,7 @@ async def process(
 
         case "spawn":
             if not store:
-                return ToolResult.error_result("ProcessStore not available (internal error)")
+                return ToolResult.error_result("ProcessManager not available (internal error)")
             if not cmd:
                 return ToolResult.error_result("Provide cmd to spawn")
             session = await store.spawn(cmd)
@@ -100,7 +100,7 @@ async def process(
 
         case "poll" | "log" | "write" | "clear":
             if not store:
-                return ToolResult.error_result("ProcessStore not available (internal error)")
+                return ToolResult.error_result("ProcessManager not available (internal error)")
             if not session_id:
                 return ToolResult.error_result(f"Provide session_id for action '{action}'")
             session = store.get(session_id)

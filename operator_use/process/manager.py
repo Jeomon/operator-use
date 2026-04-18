@@ -6,10 +6,10 @@ import sys
 import uuid
 from pathlib import Path
 
-from operator_use.process.views import ProcessSession
+from operator_use.process.views import Process
 
 
-async def _read_output(session: ProcessSession) -> None:
+async def _read_output(session: Process) -> None:
     """Background task: drain stdout+stderr into session.output buffer."""
     try:
         while True:
@@ -21,14 +21,14 @@ async def _read_output(session: ProcessSession) -> None:
         pass
 
 
-class ProcessStore:
+class ProcessManager:
     """Registry for background shell sessions — spawn, poll, log, write, clear."""
 
     def __init__(self) -> None:
-        self._sessions: dict[str, ProcessSession] = {}
+        self._sessions: dict[str, Process] = {}
 
-    async def spawn(self, cmd: str) -> ProcessSession:
-        """Start a command in the background. Returns the new ProcessSession."""
+    async def spawn(self, cmd: str) -> Process:
+        """Start a command in the background. Returns the new Process."""
         env = os.environ.copy()
         shell_args = ["cmd", "/c", cmd] if sys.platform == "win32" else ["/bin/bash", "-c", cmd]
         proc = await asyncio.create_subprocess_exec(
@@ -40,12 +40,12 @@ class ProcessStore:
             cwd=str(Path.cwd()),
         )
         sid = uuid.uuid4().hex[:8]
-        session = ProcessSession(session_id=sid, cmd=cmd, process=proc)
+        session = Process(session_id=sid, cmd=cmd, process=proc)
         session._reader = asyncio.ensure_future(_read_output(session))
         self._sessions[sid] = session
         return session
 
-    def get(self, session_id: str) -> ProcessSession | None:
+    def get(self, session_id: str) -> Process | None:
         return self._sessions.get(session_id)
 
     def clear(self, session_id: str) -> bool:
