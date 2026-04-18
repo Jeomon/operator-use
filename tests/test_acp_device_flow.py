@@ -220,3 +220,29 @@ async def test_device_flow_disabled_returns_404():
     async with TestClient(TestServer(server._app)) as client:
         resp = await client.post("/auth/device")
         assert resp.status == 404
+
+
+@pytest.mark.asyncio
+async def test_device_flow_no_token_returns_401(df_server):
+    async with TestClient(TestServer(df_server._app)) as client:
+        resp = await client.get("/agents")
+        assert resp.status == 401
+
+
+@pytest.mark.asyncio
+async def test_post_auth_token_invalid_body_returns_400(df_server):
+    async with TestClient(TestServer(df_server._app)) as client:
+        resp = await client.post("/auth/token", data="not-json", headers={"Content-Type": "application/json"})
+        assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_post_auth_approve_expired_code_returns_404(df_server):
+    import time
+    async with TestClient(TestServer(df_server._app)) as client:
+        resp = await client.post("/auth/device")
+        device_code = (await resp.json())["device_code"]
+        # Force expiry
+        df_server._device_flow._pending[device_code].expires_at = time.monotonic() - 1
+        approve_resp = await client.post(f"/auth/approve/{device_code}")
+        assert approve_resp.status == 404

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator
 from typing import Callable
 
@@ -118,6 +119,9 @@ class ACPServer:
         Per-agent tokens (per_agent_tokens) take precedence over the global auth_token.
         When per-agent tokens are configured, each token grants access to exactly one agent —
         the caller cannot see or reach any other agent on this server.
+        When device_flow_enabled, all requests must carry a valid device-flow token.
+        The /auth/* endpoints are exempt so that new clients can obtain a code/token
+        without already having one.
         request["_authed_agent"]:
           - str  → caller is locked to this agent_id
           - None → global access (all agents allowed)
@@ -138,9 +142,11 @@ class ACPServer:
                 return web.Response(status=401, text="Unauthorized")
             request["_authed_agent"] = None  # global — all agents accessible
         else:
-            # No static auth configured — check device-flow tokens
-            if self._device_flow and provided:
-                if not self._device_flow.validate_token(provided):
+            if self._device_flow:
+                # /auth/* endpoints are open by design (device flow handshake)
+                if not request.path.startswith("/auth/") and (
+                    not provided or not self._device_flow.validate_token(provided)
+                ):
                     return web.Response(status=401, text="Unauthorized")
             request["_authed_agent"] = None
 
@@ -352,7 +358,6 @@ class ACPServer:
         return web.json_response(TokenResponse(access_token=token).model_dump())
 
     async def _handle_approve_page(self, request: web.Request) -> web.Response:
-        import time
         pending = self._device_flow.list_pending()
         if not pending:
             body = "<h1>No pending device requests</h1>"
