@@ -24,12 +24,14 @@ from operator_use.acp.provenance import ACPProvenance
 from operator_use.acp.models import (
     AgentListResponse,
     AgentMetadata,
+    DeviceCodeResponse,
     MessagePart,
     Run,
     RunCreateRequest,
     RunMode,
     RunStatus,
     TextMessagePart,
+    TokenRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -114,8 +116,6 @@ class ACPClient:
         then polls until the human approves. On success, sets
         self.config.auth_token and returns the access token.
         """
-        from operator_use.acp.models import DeviceCodeResponse, TokenRequest
-
         session = self._ensure_session()
 
         # Step 1: Request a device code
@@ -124,9 +124,8 @@ class ACPClient:
             data = await resp.json()
         code_info = DeviceCodeResponse(**data)
 
-        print(
-            f"\nVisit {code_info.verification_uri} and enter code: {code_info.user_code}\n"
-            f"Waiting for approval..."
+        logger.info(
+            f"Visit {code_info.verification_uri} and enter code: {code_info.user_code} — waiting for approval"
         )
 
         interval = poll_interval if poll_interval is not None else float(code_info.interval)
@@ -146,8 +145,12 @@ class ACPClient:
                     token_data = await resp.json()
                     token = token_data["access_token"]
                     self.config.auth_token = token
-                    # Update session headers so subsequent calls use the new token
-                    self._session._default_headers.update({"Authorization": f"Bearer {token}"})
+                    await self._session.close()
+                    self._session = aiohttp.ClientSession(
+                        base_url=self.config.base_url,
+                        headers=self._auth_headers(),
+                        timeout=aiohttp.ClientTimeout(total=self.config.timeout),
+                    )
                     return token
                 resp.raise_for_status()
 
