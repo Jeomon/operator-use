@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from operator_use.agent.service import Agent
 from operator_use.bus.service import Bus
-from operator_use.bus.views import IncomingMessage, OutgoingMessage, TextPart
+from operator_use.bus.views import OutgoingMessage
 from operator_use.gateway.channels.base import BaseChannel
 from operator_use.gateway.service import Gateway
 from operator_use.messages.service import HumanMessage
