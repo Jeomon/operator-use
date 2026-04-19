@@ -1,10 +1,10 @@
-from enum import Enum
+from enum import StrEnum
 from pydantic import BaseModel
 
 from operator_use.providers.views import TokenUsage
 
 
-class LLMStreamEventType(str, Enum):
+class LLMStreamEventType(StrEnum):
     TEXT_START = "text_start"
     TEXT_DELTA = "text_delta"
     TEXT_END = "text_end"
@@ -15,13 +15,13 @@ class LLMStreamEventType(str, Enum):
     ERROR = "error"
 
 
-class LLMEventType(str, Enum):
+class LLMEventType(StrEnum):
     TEXT = "text"
     TOOL_CALL = "tool_call"
     ERROR = "error"
 
 
-class StopReason(str, Enum):
+class StopReason(StrEnum):
     END_TURN = "end_turn"           # normal completion
     MAX_TOKENS = "max_tokens"       # hit token/context limit
     TOOL_CALL = "tool_call"         # tool/function call requested

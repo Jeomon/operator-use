@@ -1,8 +1,8 @@
 """Hook event types and context dataclasses."""
 
 from dataclasses import dataclass
-from enum import Enum
 from typing import TYPE_CHECKING, Any
+from enum import StrEnum
 
 if TYPE_CHECKING:
     from operator_use.bus import IncomingMessage
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from operator_use.agent.tools import ToolResult
 
 
-class HookEvent(str, Enum):
+class HookEvent(StrEnum):
     BEFORE_AGENT_START = "before_agent_start"
     AFTER_AGENT_START = "after_agent_start"
     BEFORE_AGENT_END = "before_agent_end"

@@ -40,6 +40,7 @@ def main():
     parser.add_argument("--duration", action='store_true', help="Extract duration")
     parser.add_argument("--views", action='store_true', help="Extract views")
     parser.add_argument("--transcript", action='store_true', help="Extract transcript")
+    parser.add_argument("-o", "--output", help="Output file path to save JSON result")
     
     args = parser.parse_args()
     
@@ -54,7 +55,11 @@ def main():
         fields = ['title', 'uploader', 'duration', 'views']
     
     result = get_video_data(args.video_id, fields)
-    print(json.dumps(result, indent=2))
+    if args.output:
+        with open(args.output, 'w', encoding='utf-8') as f:
+            json.dump(result, f, indent=2)
+    else:
+        print(json.dumps(result, indent=2))
 
 if __name__ == "__main__":
     main()
