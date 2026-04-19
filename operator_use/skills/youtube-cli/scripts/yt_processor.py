@@ -1,0 +1,60 @@
+import yt_dlp
+from youtube_transcript_api import YouTubeTranscriptApi
+import argparse
+import sys
+import json
+
+def get_video_data(video_id, fields):
+    data = {}
+    
+    # Get metadata if requested
+    if any(f in fields for f in ['title', 'uploader', 'duration', 'views']):
+        ydl_opts = {'quiet': True}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            try:
+                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+                if 'title' in fields: data['title'] = info.get('title')
+                if 'uploader' in fields: data['uploader'] = info.get('uploader')
+                if 'duration' in fields: data['duration'] = info.get('duration')
+                if 'views' in fields: data['views'] = info.get('view_count')
+            except Exception as e:
+                data['error_metadata'] = str(e)
+                
+    # Get transcript if requested
+    if 'transcript' in fields:
+        try:
+            # Using instance to fetch
+            api = YouTubeTranscriptApi()
+            transcript_list = api.fetch(video_id)
+            data['transcript'] = " ".join([t.text for t in transcript_list])
+        except Exception as e:
+            data['error_transcript'] = str(e)
+            
+    return data
+
+def main():
+    parser = argparse.ArgumentParser(description="YouTube CLI processor")
+    parser.add_argument("video_id", help="YouTube Video ID")
+    parser.add_argument("--title", action='store_true', help="Extract title")
+    parser.add_argument("--uploader", action='store_true', help="Extract uploader")
+    parser.add_argument("--duration", action='store_true', help="Extract duration")
+    parser.add_argument("--views", action='store_true', help="Extract views")
+    parser.add_argument("--transcript", action='store_true', help="Extract transcript")
+    
+    args = parser.parse_args()
+    
+    fields = []
+    if args.title: fields.append('title')
+    if args.uploader: fields.append('uploader')
+    if args.duration: fields.append('duration')
+    if args.views: fields.append('views')
+    if args.transcript: fields.append('transcript')
+    
+    if not fields:
+        fields = ['title', 'uploader', 'duration', 'views']
+    
+    result = get_video_data(args.video_id, fields)
+    print(json.dumps(result, indent=2))
+
+if __name__ == "__main__":
+    main()

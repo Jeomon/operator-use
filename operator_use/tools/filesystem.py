@@ -13,7 +13,7 @@ def _get_workspace(**kwargs) -> Path:
 class ReadFile(BaseModel):
     path: str = Field(
         ...,
-        description="Absolute path or path relative to the codebase root. Use list_dir first if you're unsure where the file is.",
+        description="Absolute path (anywhere on the filesystem) or path relative to the workspace root. Use list_dir first if you're unsure where the file is.",
     )
     start_line: int | None = Field(
         default=None,
@@ -69,7 +69,7 @@ async def read_file(
 class WriteFile(BaseModel):
     path: str = Field(
         ...,
-        description="Absolute path or path relative to the codebase root. Parent directories are created automatically.",
+        description="Absolute path (anywhere on the filesystem) or path relative to the workspace root. Parent directories are created automatically.",
     )
     content: str = Field(
         ...,
@@ -123,7 +123,7 @@ class Edit(BaseModel):
 
 
 class EditFile(BaseModel):
-    path: str = Field(..., description="Absolute path or path relative to the codebase root.")
+    path: str = Field(..., description="Absolute path (anywhere on the filesystem) or path relative to the workspace root.")
     edits: list[Edit] = Field(
         ...,
         description="One or more edits to apply in order. Each entry finds old_content and replaces it with new_content. Applied sequentially — one read, one write.",
@@ -194,7 +194,7 @@ async def edit_file(path: str, edits: list[dict], **kwargs) -> ToolResult:
 class ListDir(BaseModel):
     path: str = Field(
         default=".",
-        description="Absolute path or path relative to the workspace root. Omit to list the workspace root.",
+        description="Absolute path (anywhere on the filesystem) or path relative to the workspace root. Omit to list the workspace root.",
     )
 
 

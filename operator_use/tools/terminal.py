@@ -71,7 +71,6 @@ async def terminal(cmd: str, timeout: int = 10, cwd: str | None = None, **kwargs
         shell_cmd = ["/bin/bash", "-c", cmd]
 
     workspace = kwargs.get("_workspace") or get_named_workspace_dir("operator")
-    Path(workspace, "temp").mkdir(parents=True, exist_ok=True)
     if cwd:
         resolved = Path(cwd) if Path(cwd).is_absolute() else Path(workspace) / cwd
         cwd = str(resolved)
