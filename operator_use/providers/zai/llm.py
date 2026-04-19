@@ -22,6 +22,8 @@ from operator_use.providers.events import (
     LLMStreamEventType,
     ToolCall,
     Thinking,
+    StopReason,
+    map_openai_stop_reason,
 )
 
 logger = logging.getLogger(__name__)
@@ -165,6 +167,8 @@ class ChatZAI(BaseChatLLM):
         thinking = message.get("reasoning") or message.get("reasoning_content")
         thinking_obj = Thinking(content=thinking, signature=None) if thinking else None
 
+        stop_reason = map_openai_stop_reason(choice.get("finish_reason"))
+
         if "tool_calls" in message and message["tool_calls"]:
             tool_call = message["tool_calls"][0]
             try:
@@ -180,12 +184,14 @@ class ChatZAI(BaseChatLLM):
                     id=tool_call.get("id", ""), name=tool_call["function"]["name"], params=params
                 ),
                 usage=usage,
+                stop_reason=stop_reason,
             )
         return LLMEvent(
             type=LLMEventType.TEXT,
             content=message.get("content", ""),
             thinking=thinking_obj,
             usage=usage,
+            stop_reason=stop_reason,
         )
 
     @overload
@@ -372,6 +378,7 @@ class ChatZAI(BaseChatLLM):
                 tool_call_name = None
                 tool_call_args = ""
                 usage = None
+                raw_finish_reason = None
 
                 text_started = False
                 think_started = False
@@ -399,7 +406,10 @@ class ChatZAI(BaseChatLLM):
                                 )
                             continue
 
-                        delta = chunk["choices"][0].get("delta", {})
+                        choice = chunk["choices"][0]
+                        if choice.get("finish_reason"):
+                            raw_finish_reason = choice["finish_reason"]
+                        delta = choice.get("delta", {})
 
                         reasoning_delta = delta.get("reasoning") or delta.get("reasoning_content")
                         if reasoning_delta:
@@ -433,6 +443,8 @@ class ChatZAI(BaseChatLLM):
                                 if func.get("arguments"):
                                     tool_call_args += func["arguments"]
 
+                stop_reason = map_openai_stop_reason(raw_finish_reason)
+
                 # Yield accumulated tool call as final response
                 if tool_call_id and tool_call_name:
                     try:
@@ -444,12 +456,13 @@ class ChatZAI(BaseChatLLM):
                         type=LLMStreamEventType.TOOL_CALL,
                         tool_call=ToolCall(id=tool_call_id, name=tool_call_name, params=params),
                         usage=usage,
+                        stop_reason=stop_reason,
                     )
                 else:
                     if think_started:
                         yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
                     if text_started:
-                        yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+                        yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage, stop_reason=stop_reason)
 
     @overload
     async def astream(
@@ -498,6 +511,7 @@ class ChatZAI(BaseChatLLM):
                     tool_call_name = None
                     tool_call_args = ""
                     usage = None
+                    raw_finish_reason = None
 
                     text_started = False
                     think_started = False
@@ -525,7 +539,10 @@ class ChatZAI(BaseChatLLM):
                                     )
                                 continue
 
-                            delta = chunk["choices"][0].get("delta", {})
+                            choice = chunk["choices"][0]
+                            if choice.get("finish_reason"):
+                                raw_finish_reason = choice["finish_reason"]
+                            delta = choice.get("delta", {})
 
                             reasoning_delta = delta.get("reasoning") or delta.get("reasoning_content")
                             if reasoning_delta:
@@ -559,6 +576,8 @@ class ChatZAI(BaseChatLLM):
                                     if func.get("arguments"):
                                         tool_call_args += func["arguments"]
 
+                    stop_reason = map_openai_stop_reason(raw_finish_reason)
+
                     # Yield accumulated tool call as final response
                     if tool_call_id and tool_call_name:
                         try:
@@ -570,12 +589,13 @@ class ChatZAI(BaseChatLLM):
                             type=LLMStreamEventType.TOOL_CALL,
                             tool_call=ToolCall(id=tool_call_id, name=tool_call_name, params=params),
                             usage=usage,
+                            stop_reason=stop_reason,
                         )
                     else:
                         if think_started:
                             yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
                         if text_started:
-                            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+                            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage, stop_reason=stop_reason)
         except Exception as e:
             logger.error(f"LLM stream error | {e}")
             yield LLMStreamEvent(type=LLMStreamEventType.ERROR, content=str(e))

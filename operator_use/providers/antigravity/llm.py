@@ -34,8 +34,10 @@ from operator_use.providers.events import (
     LLMEventType,
     LLMStreamEvent,
     LLMStreamEventType,
+    StopReason,
     ToolCall,
     Thinking,
+    map_google_stop_reason,
 )
 from operator_use.providers.views import Metadata, TokenUsage
 from operator_use.tools import Tool
@@ -210,8 +212,8 @@ def _parse_sse_line(line: str) -> Optional[dict]:
 
 def _extract_from_chunk(
     chunk: dict,
-) -> tuple[str, Optional[str], Optional[dict], Optional[str], Optional[dict]]:
-    """Return (text, thinking_text, function_call, thought_signature, usage)."""
+) -> tuple[str, Optional[str], Optional[dict], Optional[str], Optional[dict], Optional[str]]:
+    """Return (text, thinking_text, function_call, thought_signature, usage, finish_reason)."""
     # API wraps the response in a "response" key
     if "response" in chunk:
         chunk = chunk["response"]
@@ -220,8 +222,11 @@ def _extract_from_chunk(
     thinking = None
     thought_signature = None
     function_call = None
+    finish_reason = None
 
     for candidate in candidates:
+        if candidate.get("finishReason"):
+            finish_reason = candidate["finishReason"]
         content = candidate.get("content", {})
         for part in content.get("parts", []):
             if part.get("thought"):
@@ -237,7 +242,7 @@ def _extract_from_chunk(
                     thought_signature = part.get("thoughtSignature")
 
     usage_meta = chunk.get("usageMetadata")
-    return text, thinking, function_call, thought_signature, usage_meta
+    return text, thinking, function_call, thought_signature, usage_meta, finish_reason
 
 
 def _make_usage(meta: Optional[dict]) -> Optional[TokenUsage]:
@@ -255,10 +260,11 @@ def _extract_final(chunks: list[dict]) -> LLMEvent:
     thinking_parts: list[str] = []
     function_call: Optional[dict] = None
     thought_signature: Optional[str] = None
+    raw_finish_reason: Optional[str] = None
     usage = None
 
     for chunk in chunks:
-        t, th, fc, ts, meta = _extract_from_chunk(chunk)
+        t, th, fc, ts, meta, fr = _extract_from_chunk(chunk)
         if t:
             text_parts.append(t)
         if th:
@@ -267,8 +273,12 @@ def _extract_final(chunks: list[dict]) -> LLMEvent:
             function_call = fc
         if ts and not thought_signature:
             thought_signature = ts
+        if fr:
+            raw_finish_reason = fr
         if meta:
             usage = _make_usage(meta)
+
+    stop_reason = map_google_stop_reason(raw_finish_reason)
 
     if function_call:
         name = function_call.get("name", "")
@@ -286,6 +296,7 @@ def _extract_final(chunks: list[dict]) -> LLMEvent:
             type=LLMEventType.TOOL_CALL,
             tool_call=ToolCall(id=call_id, name=name, params=args),
             usage=usage,
+            stop_reason=stop_reason,
             thinking=Thinking(
                 content="".join(thinking_parts) if thinking_parts else "",
                 signature=thought_signature,
@@ -303,6 +314,7 @@ def _extract_final(chunks: list[dict]) -> LLMEvent:
         content="".join(text_parts),
         thinking=thinking_obj,
         usage=usage,
+        stop_reason=stop_reason,
     )
 
 
@@ -527,6 +539,7 @@ class ChatAntigravity(BaseChatLLM):
         tool_call_id: Optional[str] = None
         tool_args: dict = {}
         thought_signature: Optional[str] = None
+        raw_finish_reason: Optional[str] = None
         usage = None
 
         with httpx.Client(timeout=self._timeout) as client:
@@ -540,9 +553,11 @@ class ChatAntigravity(BaseChatLLM):
                     if not chunk:
                         continue
 
-                    t, th, fc, ts, meta = _extract_from_chunk(chunk)
+                    t, th, fc, ts, meta, fr = _extract_from_chunk(chunk)
                     if meta:
                         usage = _make_usage(meta)
+                    if fr:
+                        raw_finish_reason = fr
 
                     if th:
                         if not think_started:
@@ -574,15 +589,17 @@ class ChatAntigravity(BaseChatLLM):
 
                         tool_call_id = f"call_{uuid.uuid4().hex[:8]}"
 
+        stop_reason = map_google_stop_reason(raw_finish_reason)
         if think_started:
             yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
         if text_started:
-            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage, stop_reason=stop_reason)
         if tool_name and tool_call_id:
             yield LLMStreamEvent(
                 type=LLMStreamEventType.TOOL_CALL,
                 tool_call=ToolCall(id=tool_call_id, name=tool_name, params=tool_args),
                 usage=usage,
+                stop_reason=stop_reason,
                 thinking=Thinking(content="", signature=thought_signature)
                 if thought_signature
                 else None,
@@ -604,6 +621,7 @@ class ChatAntigravity(BaseChatLLM):
             tool_call_id: Optional[str] = None
             tool_args: dict = {}
             thought_signature: Optional[str] = None
+            raw_finish_reason: Optional[str] = None
             usage = None
 
             async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -619,9 +637,11 @@ class ChatAntigravity(BaseChatLLM):
                         if not chunk:
                             continue
 
-                        t, th, fc, ts, meta = _extract_from_chunk(chunk)
+                        t, th, fc, ts, meta, fr = _extract_from_chunk(chunk)
                         if meta:
                             usage = _make_usage(meta)
+                        if fr:
+                            raw_finish_reason = fr
 
                         if th:
                             if not think_started:
@@ -653,15 +673,17 @@ class ChatAntigravity(BaseChatLLM):
 
                             tool_call_id = f"call_{uuid.uuid4().hex[:8]}"
 
+            stop_reason = map_google_stop_reason(raw_finish_reason)
             if think_started:
                 yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
             if text_started:
-                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage, stop_reason=stop_reason)
             if tool_name and tool_call_id:
                 yield LLMStreamEvent(
                     type=LLMStreamEventType.TOOL_CALL,
                     tool_call=ToolCall(id=tool_call_id, name=tool_name, params=tool_args),
                     usage=usage,
+                    stop_reason=stop_reason,
                     thinking=Thinking(content="", signature=thought_signature)
                     if thought_signature
                     else None,

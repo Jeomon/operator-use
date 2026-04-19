@@ -24,6 +24,8 @@ from operator_use.providers.events import (
     LLMStreamEventType,
     ToolCall,
     Thinking,
+    StopReason,
+    map_google_stop_reason,
 )
 
 logger = logging.getLogger(__name__)
@@ -342,6 +344,14 @@ class ChatGoogle(BaseChatLLM):
         """
         usage = self._extract_usage(response.usage_metadata)
 
+        raw_finish_reason = None
+        try:
+            if response.candidates:
+                raw_finish_reason = response.candidates[0].finish_reason
+        except (AttributeError, IndexError):
+            pass
+        stop_reason = map_google_stop_reason(raw_finish_reason)
+
         # Check for function calls first
         function_calls = response.function_calls
         if function_calls:
@@ -359,6 +369,7 @@ class ChatGoogle(BaseChatLLM):
                 tool_call=ToolCall(id=fc_id, name=fc.name, params=dict(fc.args) if fc.args else {}),
                 thinking=thinking,
                 usage=usage,
+                stop_reason=stop_reason,
             )
 
         # Handle regular text response (use _extract_text to avoid SDK warning
@@ -370,7 +381,8 @@ class ChatGoogle(BaseChatLLM):
             Thinking(content=thinking_content, signature=None) if thinking_content else None
         )
         return LLMEvent(
-            type=LLMEventType.TEXT, content=text_content, thinking=thinking_obj, usage=usage
+            type=LLMEventType.TEXT, content=text_content, thinking=thinking_obj, usage=usage,
+            stop_reason=stop_reason,
         )
 
     @overload
@@ -476,6 +488,7 @@ class ChatGoogle(BaseChatLLM):
         config = self._build_config(system_instruction, google_tools, structured_output, json_mode)
 
         usage = None
+        raw_finish_reason = None
 
         text_started = False
         think_started = False
@@ -485,6 +498,13 @@ class ChatGoogle(BaseChatLLM):
             contents=contents,
             config=config,
         ):
+            # Track finish_reason from candidates
+            try:
+                if chunk.candidates and chunk.candidates[0].finish_reason:
+                    raw_finish_reason = chunk.candidates[0].finish_reason
+            except (AttributeError, IndexError):
+                pass
+
             # Yield thinking parts
             try:
                 if chunk.candidates and chunk.candidates[0].content:
@@ -514,6 +534,7 @@ class ChatGoogle(BaseChatLLM):
                                 if thought_sig
                                 else None,
                                 usage=chunk_usage,
+                                stop_reason=map_google_stop_reason(raw_finish_reason),
                             )
             except (AttributeError, IndexError):
                 pass
@@ -535,7 +556,10 @@ class ChatGoogle(BaseChatLLM):
         if think_started:
             yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
         if text_started:
-            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+            yield LLMStreamEvent(
+                type=LLMStreamEventType.TEXT_END, usage=usage,
+                stop_reason=map_google_stop_reason(raw_finish_reason),
+            )
 
     @overload
     async def astream(
@@ -559,6 +583,7 @@ class ChatGoogle(BaseChatLLM):
             config = self._build_config(system_instruction, google_tools, structured_output, json_mode)
 
             usage = None
+            raw_finish_reason = None
 
             text_started = False
             think_started = False
@@ -568,6 +593,13 @@ class ChatGoogle(BaseChatLLM):
                 contents=contents,
                 config=config,
             ):
+                # Track finish_reason from candidates
+                try:
+                    if chunk.candidates and chunk.candidates[0].finish_reason:
+                        raw_finish_reason = chunk.candidates[0].finish_reason
+                except (AttributeError, IndexError):
+                    pass
+
                 # Yield thinking parts and detect function calls
                 try:
                     if chunk.candidates and chunk.candidates[0].content:
@@ -597,6 +629,7 @@ class ChatGoogle(BaseChatLLM):
                                     if thought_sig
                                     else None,
                                     usage=chunk_usage,
+                                    stop_reason=map_google_stop_reason(raw_finish_reason),
                                 )
                 except (AttributeError, IndexError):
                     pass
@@ -618,7 +651,10 @@ class ChatGoogle(BaseChatLLM):
             if think_started:
                 yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
             if text_started:
-                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+                yield LLMStreamEvent(
+                    type=LLMStreamEventType.TEXT_END, usage=usage,
+                    stop_reason=map_google_stop_reason(raw_finish_reason),
+                )
         except Exception as e:
             logger.error(f"LLM stream error | {e}")
             yield LLMStreamEvent(type=LLMStreamEventType.ERROR, content=str(e))

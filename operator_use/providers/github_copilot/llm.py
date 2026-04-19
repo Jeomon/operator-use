@@ -32,7 +32,9 @@ from operator_use.providers.events import (
     LLMEventType,
     LLMStreamEvent,
     LLMStreamEventType,
+    StopReason,
     ToolCall,
+    map_openai_stop_reason,
 )
 from operator_use.providers.views import Metadata, TokenUsage
 from operator_use.tools import Tool
@@ -128,11 +130,14 @@ def _extract_final(chunks: list[dict]) -> LLMEvent:
     tool_name: Optional[str] = None
     tool_call_id: Optional[str] = None
     tool_args_parts: list[str] = []
+    raw_finish_reason: Optional[str] = None
     usage = None
 
     for chunk in chunks:
         choices = chunk.get("choices", [])
         for choice in choices:
+            if choice.get("finish_reason"):
+                raw_finish_reason = choice["finish_reason"]
             delta = choice.get("delta", {})
             content = delta.get("content")
             if content:
@@ -154,6 +159,8 @@ def _extract_final(chunks: list[dict]) -> LLMEvent:
                 total_tokens=u.get("total_tokens", 0),
             )
 
+    stop_reason = map_openai_stop_reason(raw_finish_reason)
+
     if tool_name and tool_call_id:
         args_str = "".join(tool_args_parts)
         try:
@@ -164,9 +171,10 @@ def _extract_final(chunks: list[dict]) -> LLMEvent:
             type=LLMEventType.TOOL_CALL,
             tool_call=ToolCall(id=tool_call_id, name=tool_name, params=params),
             usage=usage,
+            stop_reason=stop_reason,
         )
 
-    return LLMEvent(type=LLMEventType.TEXT, content="".join(text_parts), usage=usage)
+    return LLMEvent(type=LLMEventType.TEXT, content="".join(text_parts), usage=usage, stop_reason=stop_reason)
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +387,7 @@ class ChatGitHubCopilot(BaseChatLLM):
         tool_call_id: Optional[str] = None
         tool_args = ""
         text_started = False
+        raw_finish_reason: Optional[str] = None
         usage = None
 
         with httpx.Client(timeout=self._timeout) as client:
@@ -394,6 +403,8 @@ class ChatGitHubCopilot(BaseChatLLM):
                     if not chunk:
                         continue
                     for choice in chunk.get("choices", []):
+                        if choice.get("finish_reason"):
+                            raw_finish_reason = choice["finish_reason"]
                         delta = choice.get("delta", {})
                         content = delta.get("content")
                         if content:
@@ -419,8 +430,9 @@ class ChatGitHubCopilot(BaseChatLLM):
                             total_tokens=u.get("total_tokens", 0),
                         )
 
+        stop_reason = map_openai_stop_reason(raw_finish_reason)
         if text_started:
-            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage, stop_reason=stop_reason)
 
         if tool_name and tool_call_id:
             try:
@@ -431,6 +443,7 @@ class ChatGitHubCopilot(BaseChatLLM):
                 type=LLMStreamEventType.TOOL_CALL,
                 tool_call=ToolCall(id=tool_call_id, name=tool_name, params=params),
                 usage=usage,
+                stop_reason=stop_reason,
             )
 
     async def astream(
@@ -448,6 +461,7 @@ class ChatGitHubCopilot(BaseChatLLM):
             tool_call_id: Optional[str] = None
             tool_args = ""
             text_started = False
+            raw_finish_reason: Optional[str] = None
             usage = None
 
             async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -463,6 +477,8 @@ class ChatGitHubCopilot(BaseChatLLM):
                         if not chunk:
                             continue
                         for choice in chunk.get("choices", []):
+                            if choice.get("finish_reason"):
+                                raw_finish_reason = choice["finish_reason"]
                             delta = choice.get("delta", {})
                             content = delta.get("content")
                             if content:
@@ -488,8 +504,9 @@ class ChatGitHubCopilot(BaseChatLLM):
                                 total_tokens=u.get("total_tokens", 0),
                             )
 
+            stop_reason = map_openai_stop_reason(raw_finish_reason)
             if text_started:
-                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage, stop_reason=stop_reason)
 
             if tool_name and tool_call_id:
                 try:
@@ -500,6 +517,7 @@ class ChatGitHubCopilot(BaseChatLLM):
                     type=LLMStreamEventType.TOOL_CALL,
                     tool_call=ToolCall(id=tool_call_id, name=tool_name, params=params),
                     usage=usage,
+                    stop_reason=stop_reason,
                 )
         except Exception as e:
             logger.error(f"LLM stream error | {e}")

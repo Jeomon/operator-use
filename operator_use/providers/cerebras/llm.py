@@ -22,6 +22,8 @@ from operator_use.providers.events import (
     LLMStreamEventType,
     ToolCall,
     Thinking,
+    StopReason,
+    map_openai_stop_reason,
 )
 
 logger = logging.getLogger(__name__)
@@ -187,6 +189,8 @@ class ChatCerebras(BaseChatLLM):
         thinking = getattr(message, "reasoning", None)
         thinking_obj = Thinking(content=thinking, signature=None) if thinking else None
 
+        stop_reason = map_openai_stop_reason(choice.finish_reason)
+
         content = None
         if hasattr(message, "tool_calls") and message.tool_calls:
             tool_call = message.tool_calls[0]
@@ -199,6 +203,7 @@ class ChatCerebras(BaseChatLLM):
                 type=LLMEventType.TOOL_CALL,
                 tool_call=ToolCall(id=tool_call.id, name=tool_call.function.name, params=params),
                 usage=usage,
+                stop_reason=stop_reason,
             )
         else:
             content = LLMEvent(
@@ -206,6 +211,7 @@ class ChatCerebras(BaseChatLLM):
                 content=message.content or "",
                 thinking=thinking_obj,
                 usage=usage,
+                stop_reason=stop_reason,
             )
 
         return content
@@ -386,6 +392,7 @@ class ChatCerebras(BaseChatLLM):
         tool_call_name = None
         tool_call_args = ""
         usage = None
+        raw_finish_reason = None
 
         text_started = False
         think_started = False
@@ -409,6 +416,9 @@ class ChatCerebras(BaseChatLLM):
                         thinking_tokens=thinking_tokens,
                     )
                 continue
+
+            if chunk.choices[0].finish_reason:
+                raw_finish_reason = chunk.choices[0].finish_reason
 
             delta = chunk.choices[0].delta
 
@@ -438,6 +448,8 @@ class ChatCerebras(BaseChatLLM):
                     if tc_delta.function.arguments:
                         tool_call_args += tc_delta.function.arguments
 
+        stop_reason = map_openai_stop_reason(raw_finish_reason)
+
         # Yield accumulated tool call as final response
         if tool_call_id and tool_call_name:
             try:
@@ -449,12 +461,13 @@ class ChatCerebras(BaseChatLLM):
                 type=LLMStreamEventType.TOOL_CALL,
                 tool_call=ToolCall(id=tool_call_id, name=tool_call_name, params=params),
                 usage=usage,
+                stop_reason=stop_reason,
             )
         else:
             if think_started:
                 yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
             if text_started:
-                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage, stop_reason=stop_reason)
 
     @overload
     async def astream(
@@ -503,6 +516,7 @@ class ChatCerebras(BaseChatLLM):
             tool_call_name = None
             tool_call_args = ""
             usage = None
+            raw_finish_reason = None
 
             text_started = False
             think_started = False
@@ -526,6 +540,9 @@ class ChatCerebras(BaseChatLLM):
                             thinking_tokens=thinking_tokens,
                         )
                     continue
+
+                if chunk.choices[0].finish_reason:
+                    raw_finish_reason = chunk.choices[0].finish_reason
 
                 delta = chunk.choices[0].delta
 
@@ -555,6 +572,8 @@ class ChatCerebras(BaseChatLLM):
                         if tc_delta.function.arguments:
                             tool_call_args += tc_delta.function.arguments
 
+            stop_reason = map_openai_stop_reason(raw_finish_reason)
+
             # Yield accumulated tool call as final response
             if tool_call_id and tool_call_name:
                 try:
@@ -566,12 +585,13 @@ class ChatCerebras(BaseChatLLM):
                     type=LLMStreamEventType.TOOL_CALL,
                     tool_call=ToolCall(id=tool_call_id, name=tool_call_name, params=params),
                     usage=usage,
+                    stop_reason=stop_reason,
                 )
             else:
                 if think_started:
                     yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
                 if text_started:
-                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage, stop_reason=stop_reason)
         except Exception as e:
             logger.error(f"LLM stream error | {e}")
             yield LLMStreamEvent(type=LLMStreamEventType.ERROR, content=str(e))

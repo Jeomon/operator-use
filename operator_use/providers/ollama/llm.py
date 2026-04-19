@@ -23,6 +23,8 @@ from operator_use.providers.events import (
     LLMStreamEventType,
     ToolCall,
     Thinking,
+    StopReason,
+    map_openai_stop_reason,
 )
 
 logger = logging.getLogger(__name__)
@@ -129,6 +131,8 @@ class ChatOllama(BaseChatLLM):
             thinking_tokens=thinking_tokens,
         )
 
+        stop_reason = map_openai_stop_reason(response.get("done_reason"))
+
         tool_calls = message.get("tool_calls", [])
         if tool_calls:
             tool_call = tool_calls[0]
@@ -147,6 +151,7 @@ class ChatOllama(BaseChatLLM):
                     params=args,
                 ),
                 usage=usage,
+                stop_reason=stop_reason,
             )
         thinking_obj = Thinking(content=thinking, signature=None) if thinking else None
         return LLMEvent(
@@ -154,6 +159,7 @@ class ChatOllama(BaseChatLLM):
             content=message.get("content", ""),
             thinking=thinking_obj,
             usage=usage,
+            stop_reason=stop_reason,
         )
 
     @overload
@@ -318,9 +324,12 @@ class ChatOllama(BaseChatLLM):
         text_started = False
         think_started = False
         usage = None
+        raw_done_reason = None
 
         for chunk in response:
             message = chunk.get("message", {})
+            if chunk.get("done_reason"):
+                raw_done_reason = chunk.get("done_reason")
             # Ollama may send usage in the final chunk
             if "eval_count" in chunk or "prompt_eval_count" in chunk:
                 thinking = message.get("thinking")
@@ -364,12 +373,13 @@ class ChatOllama(BaseChatLLM):
                         id=f"call_{uuid.uuid4().hex[:8]}", name=func.get("name"), params=args
                     ),
                     usage=usage,
+                    stop_reason=map_openai_stop_reason(raw_done_reason),
                 )
 
         if think_started:
             yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
         if text_started:
-            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage, stop_reason=map_openai_stop_reason(raw_done_reason))
 
     @overload
     async def astream(
@@ -411,9 +421,12 @@ class ChatOllama(BaseChatLLM):
             text_started = False
             think_started = False
             usage = None
+            raw_done_reason = None
 
             async for chunk in response:
                 message = chunk.get("message", {})
+                if chunk.get("done_reason"):
+                    raw_done_reason = chunk.get("done_reason")
                 # Ollama may send usage in the final chunk
                 if "eval_count" in chunk or "prompt_eval_count" in chunk:
                     thinking = message.get("thinking")
@@ -457,12 +470,13 @@ class ChatOllama(BaseChatLLM):
                             id=f"call_{uuid.uuid4().hex[:8]}", name=func.get("name"), params=args
                         ),
                         usage=usage,
+                        stop_reason=map_openai_stop_reason(raw_done_reason),
                     )
 
             if think_started:
                 yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
             if text_started:
-                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage, stop_reason=map_openai_stop_reason(raw_done_reason))
         except Exception as e:
             logger.error(f"LLM stream error | {e}")
             yield LLMStreamEvent(type=LLMStreamEventType.ERROR, content=str(e))

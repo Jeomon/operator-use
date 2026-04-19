@@ -14,7 +14,18 @@ Shared base protocols and data models:
 # Base protocols & data models
 from operator_use.providers.base import BaseChatLLM, BaseSTT, BaseTTS, BaseImage, BaseSearch
 from operator_use.providers.views import TokenUsage, Metadata
-from operator_use.providers.events import Thinking, LLMEvent, LLMStreamEvent, ToolCall
+from operator_use.providers.events import (
+    Thinking,
+    LLMEvent,
+    LLMStreamEvent,
+    LLMEventType,
+    LLMStreamEventType,
+    ToolCall,
+    StopReason,
+    map_openai_stop_reason,
+    map_anthropic_stop_reason,
+    map_google_stop_reason,
+)
 
 # LLM providers
 from operator_use.providers.anthropic import ChatAnthropic
@@ -133,8 +144,14 @@ __all__ = [
     "Metadata",
     "Thinking",
     "LLMEvent",
+    "LLMEventType",
     "LLMStreamEvent",
+    "LLMStreamEventType",
     "ToolCall",
+    "StopReason",
+    "map_openai_stop_reason",
+    "map_anthropic_stop_reason",
+    "map_google_stop_reason",
     # LLM providers
     "ChatAnthropic",
     "ChatGoogle",

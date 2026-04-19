@@ -22,6 +22,8 @@ from operator_use.providers.events import (
     LLMStreamEventType,
     ToolCall,
     Thinking,
+    StopReason,
+    map_anthropic_stop_reason,
 )
 
 logger = logging.getLogger(__name__)
@@ -360,6 +362,8 @@ class ChatAnthropic(BaseChatLLM):
         thinking_signature = None
         tool_message = None
 
+        stop_reason = map_anthropic_stop_reason(getattr(response, "stop_reason", None))
+
         for block in content_blocks:
             if block.type == "text":
                 text_content += block.text
@@ -383,6 +387,7 @@ class ChatAnthropic(BaseChatLLM):
                         tool_call=ToolCall(id=block.id, name=block.name, params=block.input),
                         thinking=thinking,
                         usage=usage,
+                        stop_reason=stop_reason,
                     )
 
         thinking = (
@@ -394,7 +399,8 @@ class ChatAnthropic(BaseChatLLM):
             else None
         )
         return LLMEvent(
-            type=LLMEventType.TEXT, content=text_content, thinking=thinking, usage=usage
+            type=LLMEventType.TEXT, content=text_content, thinking=thinking, usage=usage,
+            stop_reason=stop_reason,
         )
 
     @overload
@@ -599,10 +605,12 @@ class ChatAnthropic(BaseChatLLM):
                     tool_call=final_content.tool_call,
                     thinking=final_content.thinking,
                     usage=final_content.usage,
+                    stop_reason=final_content.stop_reason,
                 )
             elif text_started:
                 yield LLMStreamEvent(
-                    type=LLMStreamEventType.TEXT_END, thinking=final_content.thinking, usage=usage
+                    type=LLMStreamEventType.TEXT_END, thinking=final_content.thinking, usage=usage,
+                    stop_reason=final_content.stop_reason,
                 )
 
     @overload
@@ -675,10 +683,12 @@ class ChatAnthropic(BaseChatLLM):
                         tool_call=final_content.tool_call,
                         thinking=final_content.thinking,
                         usage=final_content.usage,
+                        stop_reason=final_content.stop_reason,
                     )
                 elif text_started:
                     yield LLMStreamEvent(
-                        type=LLMStreamEventType.TEXT_END, thinking=final_content.thinking, usage=usage
+                        type=LLMStreamEventType.TEXT_END, thinking=final_content.thinking, usage=usage,
+                        stop_reason=final_content.stop_reason,
                     )
         except Exception as e:
             logger.error(f"LLM stream error | {e}")

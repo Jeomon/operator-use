@@ -22,6 +22,8 @@ from operator_use.providers.events import (
     LLMStreamEventType,
     ToolCall,
     Thinking,
+    StopReason,
+    map_openai_stop_reason,
 )
 
 logger = logging.getLogger(__name__)
@@ -244,6 +246,8 @@ class ChatMistral(BaseChatLLM):
         content = None
         thinking = None
 
+        stop_reason = map_openai_stop_reason(getattr(choice, "finish_reason", None))
+
         if hasattr(message, "tool_calls") and message.tool_calls:
             # Extract thinking from content if present (Magistral thinking models)
             if message.content:
@@ -266,6 +270,7 @@ class ChatMistral(BaseChatLLM):
                 type=LLMEventType.TOOL_CALL,
                 tool_call=ToolCall(id=tool_call.id, name=tool_call.function.name, params=params),
                 usage=usage,
+                stop_reason=stop_reason,
             )
         else:
             text, thinking = self._extract_content(message.content)
@@ -279,7 +284,8 @@ class ChatMistral(BaseChatLLM):
                     thinking_tokens=max(1, len(thinking) // 4),  # ~4 chars per token
                 )
             content = LLMEvent(
-                type=LLMEventType.TEXT, content=text or "", thinking=thinking_obj, usage=usage
+                type=LLMEventType.TEXT, content=text or "", thinking=thinking_obj, usage=usage,
+                stop_reason=stop_reason,
             )
 
         return content
@@ -458,12 +464,15 @@ class ChatMistral(BaseChatLLM):
         tool_call_name = None
         tool_call_args = ""
         usage = None
+        raw_finish_reason = None
 
         text_started = False
         think_started = False
 
         for chunk in response:
             if hasattr(chunk, "data") and hasattr(chunk.data, "choices") and chunk.data.choices:
+                if chunk.data.choices[0].finish_reason:
+                    raw_finish_reason = str(chunk.data.choices[0].finish_reason)
                 delta = chunk.data.choices[0].delta
                 if hasattr(delta, "content") and delta.content:
                     text, thinking = self._extract_content(delta.content)
@@ -510,6 +519,8 @@ class ChatMistral(BaseChatLLM):
                     thinking_tokens=thinking_tokens,
                 )
 
+        stop_reason = map_openai_stop_reason(raw_finish_reason)
+
         # Yield accumulated tool call as final response
         if tool_call_id and tool_call_name:
             try:
@@ -521,12 +532,13 @@ class ChatMistral(BaseChatLLM):
                 type=LLMStreamEventType.TOOL_CALL,
                 tool_call=ToolCall(id=tool_call_id, name=tool_call_name, params=params),
                 usage=usage,
+                stop_reason=stop_reason,
             )
         else:
             if think_started:
                 yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
             if text_started:
-                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage, stop_reason=stop_reason)
 
     @overload
     async def astream(
@@ -566,12 +578,15 @@ class ChatMistral(BaseChatLLM):
             tool_call_name = None
             tool_call_args = ""
             usage = None
+            raw_finish_reason = None
 
             text_started = False
             think_started = False
 
             async for chunk in response:
                 if hasattr(chunk, "data") and hasattr(chunk.data, "choices") and chunk.data.choices:
+                    if chunk.data.choices[0].finish_reason:
+                        raw_finish_reason = str(chunk.data.choices[0].finish_reason)
                     delta = chunk.data.choices[0].delta
                     if hasattr(delta, "content") and delta.content:
                         text, thinking = self._extract_content(delta.content)
@@ -618,6 +633,8 @@ class ChatMistral(BaseChatLLM):
                         thinking_tokens=thinking_tokens,
                     )
 
+            stop_reason = map_openai_stop_reason(raw_finish_reason)
+
             # Yield accumulated tool call as final response
             if tool_call_id and tool_call_name:
                 try:
@@ -628,12 +645,14 @@ class ChatMistral(BaseChatLLM):
                 yield LLMStreamEvent(
                     type=LLMStreamEventType.TOOL_CALL,
                     tool_call=ToolCall(id=tool_call_id, name=tool_call_name, params=params),
+                    usage=usage,
+                    stop_reason=stop_reason,
                 )
             else:
                 if think_started:
                     yield LLMStreamEvent(type=LLMStreamEventType.THINK_END)
                 if text_started:
-                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+                    yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage, stop_reason=stop_reason)
         except Exception as e:
             logger.error(f"LLM stream error | {e}")
             yield LLMStreamEvent(type=LLMStreamEventType.ERROR, content=str(e))

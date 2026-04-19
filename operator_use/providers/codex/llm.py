@@ -30,6 +30,7 @@ from operator_use.providers.events import (
     LLMEventType,
     LLMStreamEvent,
     LLMStreamEventType,
+    StopReason,
     ToolCall,
 )
 from operator_use.providers.views import Metadata, TokenUsage
@@ -337,12 +338,14 @@ def _extract_final(events: list[dict]) -> LLMEvent:
             type=LLMEventType.TOOL_CALL,
             tool_call=ToolCall(id=tool_call_id, name=tool_name, params=params),
             usage=usage,
+            stop_reason=StopReason.TOOL_CALL,
         )
 
     return LLMEvent(
         type=LLMEventType.TEXT,
         content="".join(text_parts),
         usage=usage,
+        stop_reason=StopReason.END_TURN,
     )
 
 
@@ -619,7 +622,7 @@ class ChatCodex(BaseChatLLM):
                             )
 
         if text_started:
-            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+            yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage, stop_reason=StopReason.END_TURN)
 
         if tool_name and tool_call_id:
             try:
@@ -630,6 +633,7 @@ class ChatCodex(BaseChatLLM):
                 type=LLMStreamEventType.TOOL_CALL,
                 tool_call=ToolCall(id=tool_call_id, name=tool_name, params=params),
                 usage=usage,
+                stop_reason=StopReason.TOOL_CALL,
             )
 
     async def astream(
@@ -692,7 +696,7 @@ class ChatCodex(BaseChatLLM):
                                 )
 
             if text_started:
-                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage)
+                yield LLMStreamEvent(type=LLMStreamEventType.TEXT_END, usage=usage, stop_reason=StopReason.END_TURN)
 
             if tool_name and tool_call_id:
                 try:
@@ -703,6 +707,7 @@ class ChatCodex(BaseChatLLM):
                     type=LLMStreamEventType.TOOL_CALL,
                     tool_call=ToolCall(id=tool_call_id, name=tool_name, params=params),
                     usage=usage,
+                    stop_reason=StopReason.TOOL_CALL,
                 )
         except Exception as e:
             logger.error(f"LLM stream error | {e}")
