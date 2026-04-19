@@ -61,6 +61,10 @@ def help_cmd(ctx: typer.Context):
         "Add a new agent  [dim](--provider / --model / --workspace)[/dim]",
     )
     table.add_row(
+        "operator agents update <id>",
+        "Update an agent  [dim](--description / --provider / --model)[/dim]",
+    )
+    table.add_row(
         "operator agents remove <id>",
         "Remove an agent  [dim](--delete-workspace to also wipe files)[/dim]",
     )
@@ -1330,6 +1334,7 @@ def agents_add(
         local_agents = [defn]
         acp_agents = {}
 
+    # Write new agent's IDENTITY.md before config save
     write_identity_md(ws_path, defn, local_agents=local_agents, acp_agents=acp_agents)
 
     def mutate(data: dict):
@@ -1361,7 +1366,65 @@ def agents_add(
         lst.append(entry)
 
     _load_and_save_config(mutate)
+
+    # Refresh all agents' IDENTITY.md so existing agents see the new peer
+    try:
+        config = load_config(USERDATA_DIR)
+        for a in config.agents.list:
+            write_identity_md(_resolve_agent_workspace(a), a, local_agents=config.agents.list, acp_agents=config.acp_agents)
+    except Exception:
+        pass
+
     console.print(f"[green]Agent '{agent_id}' added.[/green] Workspace: {ws_path}")
+
+
+@agents_app.command("update")
+def agents_update(
+    agent_id: str = typer.Argument(..., help="Agent ID to update."),
+    description: str = typer.Option(None, "--description", "-d", help="Short role/purpose summary."),
+    provider: str = typer.Option(None, "--provider", "-p", help="LLM provider."),
+    model: str = typer.Option(None, "--model", "-m", help="LLM model."),
+    prompt_mode: str = typer.Option(None, "--prompt-mode", help="Prompt mode: full, minimal, or none."),
+    system_prompt: str = typer.Option(None, "--system-prompt", "-s", help="Freeform system prompt instructions."),
+    tools_profile: str = typer.Option(None, "--tools-profile", help="Tool profile: minimal, coding, or full."),
+):
+    """Update an existing agent's configuration and regenerate its IDENTITY.md."""
+    from operator_use.config import load_config, AgentDefinition
+    from operator_use.cli.start import write_identity_md, _resolve_agent_workspace
+
+    def mutate(data: dict):
+        lst = data.get("agents", {}).get("list", [])
+        entry = next((a for a in lst if a.get("id") == agent_id), None)
+        if entry is None:
+            console.print(f"[red]Agent '{agent_id}' not found.[/red]")
+            raise typer.Exit(1)
+        if description is not None:
+            entry["description"] = description
+        if provider and model:
+            entry["llmConfig"] = {"provider": provider, "model": model}
+        elif provider:
+            entry.setdefault("llmConfig", {})["provider"] = provider
+        elif model:
+            entry.setdefault("llmConfig", {})["model"] = model
+        if prompt_mode is not None:
+            entry["promptMode"] = prompt_mode
+        if system_prompt is not None:
+            entry["systemPrompt"] = system_prompt
+        if tools_profile is not None:
+            entry.setdefault("tools", {})["profile"] = tools_profile
+
+    _load_and_save_config(mutate)
+
+    # Regenerate IDENTITY.md for all agents — peers reference each other's description
+    try:
+        config = load_config(USERDATA_DIR)
+        for defn in config.agents.list:
+            ws_path = _resolve_agent_workspace(defn)
+            write_identity_md(ws_path, defn, local_agents=config.agents.list, acp_agents=config.acp_agents)
+    except Exception as e:
+        console.print(f"[yellow]Config saved but IDENTITY.md update failed: {e}[/yellow]")
+
+    console.print(f"[green]Agent '{agent_id}' updated.[/green]")
 
 
 @agents_app.command("remove")
