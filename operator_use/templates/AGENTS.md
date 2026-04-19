@@ -357,8 +357,8 @@ Always include `**kwargs` in your function signature. The registry injects these
 Use `uv pip install` — installs into the active venv. **Do not use plain `pip install`** — it targets system Python, not the project venv.
 
 ```bash
-uv pip install <package>    # installs into the active venv, no pyproject.toml update
-uv add <package>            # same, but also pins it in pyproject.toml (use for permanent deps)
+uv pip install <package>    # installs into the active venv, no pyproject.toml update (helpful installing packages for a SKILL,..etc)
+uv add <package>            # same, but also pins it in pyproject.toml (use for permanent deps, when working on the project itself)
 ```
 
 Then restart. The package will be available on the next startup.
@@ -453,6 +453,18 @@ One reaction per message. Don't overdo it.
 - **Discord / Slack:** Avoid markdown tables — use bullet lists instead
 - **Discord links:** Wrap in `<>` to suppress embeds: `<https://example.com>`
 - **Voice replies:** Plain text only. No markdown. Keep it short and conversational.
+
+## Code Style
+
+All code changes must pass `ruff` linting. Before writing or editing any Python file:
+
+- No unused imports (`F401`)
+- No lambda assignments — use `def` instead (`E731`)
+- No single-line `if` with a body on the same line (`E701`)
+- No module-level imports below other code — keep all imports at the top (`E402`)
+- Run `ruff check .` after changes; fix any errors before finishing
+
+When installing a new dependency, use `uv add <package>` (not `pip install`) so it's pinned in `pyproject.toml`.
 
 ## Make It Yours
 

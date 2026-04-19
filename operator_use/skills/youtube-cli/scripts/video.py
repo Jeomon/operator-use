@@ -7,8 +7,8 @@ def get_video_data(video_id, fields):
     data = {}
 
     # Get metadata if requested
-    if any(f in fields for f in ['title', 'uploader', 'duration', 'views', 'description']):
-        ydl_opts = {'quiet': True}
+    if any(f in fields for f in ['title', 'uploader', 'duration', 'views', 'description', 'comments']):
+        ydl_opts = {'quiet': True, 'getcomments': 'comments' in fields}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
                 info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
@@ -17,7 +17,9 @@ def get_video_data(video_id, fields):
                 data['uploader'] = info.get('uploader')
                 data['duration'] = info.get('duration')
                 data['views'] = info.get('view_count')
+                data['like_count'] = info.get('like_count')
                 data['description'] = info.get('description')
+                if 'comments' in fields: data['comments'] = info.get('comments')
             except Exception as e:
                 data['error_metadata'] = str(e)
 
@@ -42,6 +44,8 @@ def main():
     parser.add_argument("--views", action='store_true', help="Extract views")
     parser.add_argument("--transcript", action='store_true', help="Extract transcript")
     parser.add_argument("--description", action='store_true', help="Extract description")
+    parser.add_argument("--comments", action='store_true', help="Extract comments")
+    parser.add_argument("--likes", action='store_true', help="Extract like count")
     parser.add_argument("-o", "--output", help="Output file path to save JSON result")
 
     args = parser.parse_args()
@@ -55,8 +59,14 @@ def main():
         fields.append('duration')
     if args.views:
         fields.append('views')
+    if args.likes:
+        fields.append('like_count')
     if args.transcript:
         fields.append('transcript')
+    if args.description:
+        fields.append('description')
+    if args.comments:
+        fields.append('comments')
 
     if not fields:
         fields = ['title', 'uploader', 'duration', 'views']
@@ -68,6 +78,8 @@ def main():
                 f.write(result['transcript'])
             elif args.description and 'description' in result:
                 f.write(result['description'])
+            elif args.comments and 'comments' in result:
+                json.dump(result['comments'], f, indent=2)
             else:
                 json.dump(result, f, indent=2)
     else:
