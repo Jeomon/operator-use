@@ -25,7 +25,7 @@ def fmt_count(n):
 def get_video_data(video_id, fields):
     data = {}
 
-    if any(f in fields for f in ["title", "uploader", "duration", "views", "description", "comments", "like_count"]):
+    if any(f in fields for f in ["title", "uploader", "duration", "views", "description", "comments", "like_count", "transcript"]):
         ydl_opts = {"quiet": True, "getcomments": "comments" in fields}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
