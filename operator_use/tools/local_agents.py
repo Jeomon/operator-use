@@ -79,12 +79,12 @@ class LocalAgents(BaseModel):
         description="Human-readable label for a spawned session (used with spawn).",
     )
     detached: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "If True, run the agent in the background and return immediately. "
+            "If True (default), run the agent in the background and return immediately. "
             "The result will be delivered back to this conversation automatically when done. "
             "END YOUR TURN after calling with detached=True — do not poll or wait. "
-            "If False (default), block until the agent finishes and return its result directly."
+            "If False, block until the agent finishes and return its result directly."
         ),
     )
     task_id: Optional[str] = Field(
