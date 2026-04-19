@@ -347,6 +347,10 @@ class Orchestrator:
                 pending_replies=self._pending_replies,
             )
 
+            # Skip sending if the agent ended silently (e.g. detached delegation)
+            if not (response_message.content or "").strip() and not streamed:
+                return
+
             # Build OutgoingMessage (runs TTS if needed)
             outgoing = await self._build_outgoing_message(
                 request_message, response_message, streamed
