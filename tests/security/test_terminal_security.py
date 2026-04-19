@@ -1,6 +1,6 @@
 """Security tests for terminal command controls. Unskipped as fixes land per SECURITY_ROADMAP.md."""
 
-from operator_use.agent.tools.builtin.terminal import _is_command_allowed
+from operator_use.tools._terminal_guards import _is_command_allowed
 
 
 class TestTerminalSecurity:
