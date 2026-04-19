@@ -285,14 +285,17 @@ class TestWindowsBackend:
     def test_run_calls_set_hooks(self):
         backend = _WindowsBackend(lambda: None)
         ct = self._make_ctypes_mock()
+        # Keep a direct reference to the mock's windll so the assertion
+        # survives after patch.dict / patch(create=True) tear down.
+        windll_mock = ct.windll
         with patch.dict("sys.modules", {"ctypes": ct, "ctypes.wintypes": ct.wintypes}):
-            with patch("ctypes.windll", ct.windll):
-                with patch("ctypes.CFUNCTYPE", ct.CFUNCTYPE):
-                    with patch("ctypes.wintypes", ct.wintypes):
+            with patch("ctypes.windll", windll_mock, create=True):
+                with patch("ctypes.CFUNCTYPE", ct.CFUNCTYPE, create=True):
+                    with patch("ctypes.wintypes", ct.wintypes, create=True):
                         backend._run()
 
         # SetWindowsHookExW should have been called twice (mouse + keyboard)
-        assert ct.windll.user32.SetWindowsHookExW.call_count >= 2
+        assert windll_mock.user32.SetWindowsHookExW.call_count >= 2
 
     def test_hook_failure_logs_warning(self, caplog):
         backend = _WindowsBackend(lambda: None)
@@ -302,9 +305,9 @@ class TestWindowsBackend:
         import logging
 
         with caplog.at_level(logging.WARNING):
-            with patch("ctypes.windll", ct.windll):
-                with patch("ctypes.CFUNCTYPE", ct.CFUNCTYPE):
-                    with patch("ctypes.wintypes", ct.wintypes):
+            with patch("ctypes.windll", ct.windll, create=True):
+                with patch("ctypes.CFUNCTYPE", ct.CFUNCTYPE, create=True):
+                    with patch("ctypes.wintypes", ct.wintypes, create=True):
                         backend._run()
 
         assert any("hook" in r.message.lower() for r in caplog.records)
