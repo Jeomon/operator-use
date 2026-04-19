@@ -28,7 +28,7 @@ from operator_use.gateway.service import Gateway
 from operator_use.messages.service import HumanMessage
 from operator_use.orchestrator.service import Orchestrator
 from operator_use.providers.events import LLMEvent, LLMEventType, ToolCall
-from operator_use.tools.service import Tool
+from operator_use.agent.tools.service import Tool
 
 
 # ---------------------------------------------------------------------------
