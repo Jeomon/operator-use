@@ -167,7 +167,7 @@ def status():
 
     # Sessions
     session_count = (
-        len(list(sessions_dir.glob("*.jsonl"))) if sessions_dir and sessions_dir.exists() else 0
+        len(list(sessions_dir.rglob("*.jsonl"))) if sessions_dir and sessions_dir.exists() else 0
     )
     table.add_row("Sessions", str(session_count))
 
@@ -197,7 +197,7 @@ def sessions(limit: int = typer.Option(20, "--limit", "-n", help="Max sessions t
         for agent_dir in workspaces_dir.iterdir():
             sd = agent_dir / "sessions"
             if sd.exists():
-                files.extend(sd.glob("*.jsonl"))
+                files.extend(sd.rglob("*.jsonl"))
     if not files:
         console.print("[dim]No sessions found.[/dim]")
         return

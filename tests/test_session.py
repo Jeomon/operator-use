@@ -106,6 +106,16 @@ def test_save_and_load_roundtrip(tmp_path):
     assert loaded.messages[1].content == "world"
 
 
+def test_save_uses_date_folder(tmp_path):
+    store = SessionStore(tmp_path)
+    session = store.get_or_create("dated-session")
+    store.save(session)
+
+    expected_dir = datetime.now().strftime("%d-%m-%Y")
+    expected_path = (tmp_path / "sessions" / expected_dir / "dated-session.jsonl")
+    assert expected_path.exists()
+
+
 def test_load_nonexistent_returns_none(tmp_path):
     store = SessionStore(tmp_path)
     result = store.load("nonexistent-session")
@@ -163,7 +173,7 @@ def test_archive_renames_file(tmp_path):
     # Active slot is gone
     assert store._sessions_path("telegram:99").exists() is False
     # Archived file exists somewhere in sessions dir
-    archived = list((tmp_path / "sessions").glob("telegram_99_archived_*.jsonl"))
+    archived = list((tmp_path / "sessions").rglob("telegram_99_archived_*.jsonl"))
     assert len(archived) == 1
 
 
@@ -203,6 +213,6 @@ def test_archive_preserves_history_in_file(tmp_path):
 
     store.archive("slack:42")
 
-    archived = list((tmp_path / "sessions").glob("slack_42_archived_*.jsonl"))
+    archived = list((tmp_path / "sessions").rglob("slack_42_archived_*.jsonl"))
     content = archived[0].read_text(encoding="utf-8")
     assert "saved message" in content

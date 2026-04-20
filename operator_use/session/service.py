@@ -23,12 +23,22 @@ class SessionStore:
         """Make session_id filesystem-safe (e.g. `:` invalid on Windows)."""
         return session_id.replace(":", "_")
 
-    def _sessions_path(self, session_id: str) -> Path:
-        return self.sessions_dir / f"{self._session_id_to_filename(session_id)}.jsonl"
+    def _sessions_path(self, session_id: str, created_at: datetime | None = None) -> Path:
+        date_key = (created_at or datetime.now()).strftime("%d-%m-%Y")
+        date_dir = ensure_directory(self.sessions_dir / date_key)
+        return date_dir / f"{self._session_id_to_filename(session_id)}.jsonl"
+
+    def _find_session_path(self, session_id: str) -> Path | None:
+        """Find an existing session file from dated folders."""
+        filename = f"{self._session_id_to_filename(session_id)}.jsonl"
+        matches = [p for p in self.sessions_dir.rglob(filename) if p.is_file()]
+        if not matches:
+            return None
+        return max(matches, key=lambda p: p.stat().st_mtime)
 
     def load(self, session_id: str) -> Session | None:
-        path = self._sessions_path(session_id)
-        if not path.exists():
+        path = self._find_session_path(session_id)
+        if path is None:
             return None
         messages: list[BaseMessage] = []
         created_at = datetime.now()
@@ -58,7 +68,9 @@ class SessionStore:
         )
 
     def save(self, session: Session) -> None:
-        path = self._sessions_path(session.id)
+        path = self._find_session_path(session.id) or self._sessions_path(
+            session.id, created_at=session.created_at
+        )
         with open(path, "w", encoding="utf-8") as f:
             meta = {
                 "type": "metadata",
@@ -85,10 +97,10 @@ class SessionStore:
 
     def delete(self, session_id: str) -> bool:
         """Delete a session. Returns True if it existed."""
-        path = self._sessions_path(session_id)
+        path = self._find_session_path(session_id)
         if session_id in self._sessions:
             del self._sessions[session_id]
-        if path.exists():
+        if path and path.exists():
             path.unlink()
             return True
         return False
@@ -98,20 +110,20 @@ class SessionStore:
 
         The active session slot is freed so the next get_or_create starts fresh.
         """
-        path = self._sessions_path(session_id)
+        path = self._find_session_path(session_id)
         if session_id in self._sessions:
             del self._sessions[session_id]
-        if path.exists():
+        if path and path.exists():
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             archive_name = f"{self._session_id_to_filename(session_id)}_archived_{timestamp}.jsonl"
-            path.rename(self.sessions_dir / archive_name)
+            path.rename(path.parent / archive_name)
             return True
         return False
 
     def list_sessions(self) -> list[dict[str, Any]]:
         """Load sessions from the sessions directory. Returns list of dicts with id, created_at, updated_at, path."""
         result: list[dict[str, Any]] = []
-        for path in self.sessions_dir.glob("*.jsonl"):
+        for path in self.sessions_dir.rglob("*.jsonl"):
             session_id = path.stem
             created_at = ""
             updated_at = ""
@@ -121,6 +133,7 @@ class SessionStore:
                     if first.strip():
                         obj = json.loads(first)
                         if obj.get("type") == "metadata" or "role" not in obj:
+                            session_id = obj.get("id") or session_id
                             created_at = obj.get("created_at", "")
                             updated_at = obj.get("updated_at", "")
             except (json.JSONDecodeError, OSError):

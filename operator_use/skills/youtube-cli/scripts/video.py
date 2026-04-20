@@ -1,5 +1,7 @@
 import argparse
 import json
+from urllib.parse import parse_qs, urlparse
+
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
 
@@ -52,6 +54,39 @@ def get_video_data(video_id, fields):
     return data
 
 
+def extract_video_id(value: str) -> str | None:
+    """Extract a YouTube video ID from either a raw ID or a supported URL."""
+    if not value:
+        return None
+
+    raw = value.strip()
+    if not raw:
+        return None
+
+    # Raw ID support (typical IDs are 11 chars, but keep this permissive).
+    if "://" not in raw and "/" not in raw and "?" not in raw:
+        return raw
+
+    parsed = urlparse(raw)
+    host = parsed.netloc.lower()
+    path = parsed.path.strip("/")
+
+    if "youtu.be" in host:
+        return path.split("/")[0] if path else None
+
+    if "youtube.com" in host or "youtube-nocookie.com" in host:
+        if path == "watch":
+            video_id = parse_qs(parsed.query).get("v", [None])[0]
+            if video_id:
+                return video_id
+        if path.startswith("shorts/") or path.startswith("embed/"):
+            parts = path.split("/")
+            if len(parts) >= 2 and parts[1]:
+                return parts[1]
+
+    return None
+
+
 def format_markdown(video_id, data, fields):
     lines = []
 
@@ -94,7 +129,8 @@ def format_markdown(video_id, data, fields):
 
 def main():
     parser = argparse.ArgumentParser(description="YouTube video info")
-    parser.add_argument("video_id", help="YouTube Video ID")
+    parser.add_argument("video_id", nargs="?", help="YouTube video ID")
+    parser.add_argument("--url", help="YouTube video URL")
     parser.add_argument("--title", action="store_true", help="Extract title")
     parser.add_argument("--uploader", action="store_true", help="Extract uploader/channel")
     parser.add_argument("--duration", action="store_true", help="Extract duration")
@@ -107,6 +143,9 @@ def main():
     parser.add_argument("-o", "--output", help="Output file path")
 
     args = parser.parse_args()
+    resolved_video_id = args.video_id or extract_video_id(args.url or "")
+    if not resolved_video_id:
+        parser.error("Provide a video ID or a valid YouTube URL via --url")
 
     fields = []
     if args.title:
@@ -129,7 +168,7 @@ def main():
     if not fields:
         fields = ["title", "uploader", "duration", "views"]
 
-    data = get_video_data(args.video_id, fields)
+    data = get_video_data(resolved_video_id, fields)
 
     if args.json:
         output = json.dumps(data, indent=2)
@@ -138,7 +177,7 @@ def main():
     elif args.output and args.description and "description" in data:
         output = data["description"]
     else:
-        output = format_markdown(args.video_id, data, fields)
+        output = format_markdown(resolved_video_id, data, fields)
 
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:

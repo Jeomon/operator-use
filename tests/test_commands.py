@@ -174,7 +174,7 @@ async def test_stop_archives_session(tmp_path):
     text = (await bus.consume_outgoing()).parts[0].content
     assert "saved" in text.lower()
     assert agent.sessions.load("telegram:123") is None
-    archived = list((tmp_path / "sessions").glob("telegram_123_archived_*.jsonl"))
+    archived = list((tmp_path / "sessions").rglob("telegram_123_archived_*.jsonl"))
     assert len(archived) == 1
 
 
@@ -194,7 +194,7 @@ async def test_stop_archives_named_session(tmp_path):
     # Named session archived, override cleared
     assert agent.sessions.load("telegram:123:work") is None
     assert "telegram:123" not in overrides
-    archived = list((tmp_path / "sessions").glob("telegram_123_work_archived_*.jsonl"))
+    archived = list((tmp_path / "sessions").rglob("telegram_123_work_archived_*.jsonl"))
     assert len(archived) == 1
 
 

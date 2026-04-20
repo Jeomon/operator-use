@@ -4,13 +4,21 @@ description: Search for videos, extract metadata, retrieve transcripts, and fetc
 ---
 
 ## What This Skill Does
-This skill uses `yt-dlp` to fetch metadata (title, uploader, views, duration) and `youtube-transcript-api` to retrieve the closed captions for a given YouTube video. It also includes search functionality using `youtube-search-python`.
+This skill uses `yt-dlp` to fetch metadata (title, uploader, views, duration, likes, optional comments) and `youtube-transcript-api` to retrieve captions for a YouTube video. It also includes search functionality via `yt-dlp`.
 
 ## Search Videos
 1. Use the script `skills/youtube-cli/scripts/search.py`.
 2. Run the command: `python skills/youtube-cli/scripts/search.py "<query>" [flags]`
-3. Available flags: `--limit <N>`, `--language <code>`, `--region <code>`, `--output` (`-o`).
-4. The script outputs the top search results in JSON format. Use `--output <path>` to save the results to a file.
+3. Available flags: `--limit <N>`, `--json`, `--output` (`-o`).
+4. By default, output is markdown. Use `--json` for raw JSON and `--output <path>` to save to file.
+
+## Inspect a Video
+1. Use the script `skills/youtube-cli/scripts/video.py`.
+2. Run either:
+   - `python skills/youtube-cli/scripts/video.py <video_id> [flags]`
+   - `python skills/youtube-cli/scripts/video.py --url "<youtube_url>" [flags]`
+3. Available flags: `--title`, `--uploader`, `--duration`, `--views`, `--likes`, `--transcript`, `--description`, `--comments`, `--json`, `--output` (`-o`).
+4. If no field flags are provided, defaults are: `title`, `uploader`, `duration`, `views`.
 
 ## Steps
 1. Use the script `skills/youtube-cli/scripts/search.py` via the terminal. Run `python skills/youtube-cli/scripts/search.py --help` for usage details.
@@ -21,6 +29,7 @@ This skill uses `yt-dlp` to fetch metadata (title, uploader, views, duration) an
 ## Common Failures
 - **400 Bad Request**: Often caused by outdated `yt-dlp` or dependency issues.
 - **No transcript available**: Some videos do not have captions, or the transcript service is disabled.
+- **Argument error**: Use either positional `video_id` or `--url`; do not pass a URL as positional text with extra unsupported flags.
 - **Terminal Truncation**: For long outputs, always use the `--output` flag.
 
 ## Pro-Tips for Research
