@@ -393,7 +393,17 @@ class Browser:
             f"--remote-debugging-port={port}",
             f"--user-data-dir={user_data_dir}",
             f"--download-default-directory={self.config.downloads_dir}",
-        ] + BROWSER_ARGS
+        ]
+
+        if self.config.attach_to_existing:
+            # User-visible launch: minimal args so Chrome opens a normal window the user can see and log into.
+            args += [
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-sync",
+            ]
+        else:
+            args += BROWSER_ARGS
 
         if self.config.headless:
             args.append("--headless=new")
