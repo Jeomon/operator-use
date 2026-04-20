@@ -131,6 +131,17 @@ class Agent:
             plugin.register_hooks(self.hooks)
             plugin.attach_prompt(self.context)
 
+        from operator_use.agent.loop import AgentLoop
+
+        self.loop = AgentLoop(
+            llm=self.llm,
+            registry=self.tool_register,
+            max_iterations=self.max_iterations,
+            name=self.agent_id,
+            hooks=self.hooks,
+            accumulate_errors=True,
+        )
+
         logger.debug(f"Registered tools: {[t.name for t in self.tool_register.list_tools()]}")
 
     # ------------------------------------------------------------------
@@ -367,16 +378,6 @@ class Agent:
 
         return tool_result, content
 
-    @staticmethod
-    def _clean_content(content: str) -> str:
-        """Strip <think> blocks, leading message IDs, and control tags from LLM output."""
-        import re
-
-        content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL)
-        content = re.sub(r"^\[(bot_)?msg_id:\d+\]\s*", "", content)
-        content = re.sub(r"<ctrl\d+>", "", content)
-        return content.strip() or "(no response)"
-
     async def _loop(
         self,
         session: Session,
@@ -384,73 +385,15 @@ class Agent:
         prompt_mode: PromptMode = PromptMode.FULL,
         system_prompt: str | None = None,
     ) -> AIMessage:
-        """Non-streaming agentic loop."""
-        tools = self.tool_register.list_tools()
-        error_messages: list[ToolMessage] = []  # Accumulate tool errors for feedback during retries
+        """Non-streaming agentic loop — delegates to self.loop."""
+        async def build_messages(iteration: int) -> list:
+            return await self._prepare_messages(session, message, prompt_mode, system_prompt)
 
-        for iteration in range(self.max_iterations):
-            # Build messages: session history + accumulated errors (for LLM feedback)
-            messages = await self._prepare_messages(session, message, prompt_mode, system_prompt)
-            # Include error_messages so LLM sees accumulated failures during retries
-            if error_messages:
-                messages.extend(error_messages)
-
-            logger.info(
-                f"LLM call | model={self.llm.model_name} messages={len(messages)} tools={len(tools)}"
-            )
-            if iteration == 0 and message:
-                await self.hooks.emit(
-                    HookEvent.AFTER_AGENT_START,
-                    AfterAgentStartContext(message=message, session=session, iteration=iteration),
-                )
-            before_llm_ctx = await self.hooks.emit(
-                HookEvent.BEFORE_LLM_CALL,
-                BeforeLLMCallContext(session=session, messages=messages, iteration=iteration),
-            )
-            messages = before_llm_ctx.messages
-
-            try:
-                llm_event = await self.llm.ainvoke(messages=messages, tools=tools)
-            except Exception as e:
-                logger.error(f"LLM call failed | {e}")
-                llm_event = LLMEvent(type=LLMEventType.ERROR, error=str(e))
-
-            after_llm_ctx = await self.hooks.emit(
-                HookEvent.AFTER_LLM_CALL,
-                AfterLLMCallContext(
-                    session=session, messages=messages, event=llm_event, iteration=iteration
-                ),
-            )
-            llm_event = after_llm_ctx.event
-
-            logger.info(f"LLM response | {llm_event.type.name}")
-            thinking, thinking_signature = (
-                (llm_event.thinking.content, llm_event.thinking.signature)
-                if llm_event.thinking
-                else (None, None)
-            )
-            match llm_event.type:
-                case LLMEventType.TOOL_CALL:
-                    tool_result, content = await self._execute_tool(
-                        llm_event.tool_call, thinking, thinking_signature, session, error_messages
-                    )
-                    if tool_result.metadata and tool_result.metadata.get("stop_loop"):
-                        return AIMessage(content=content or "")
-                case LLMEventType.TEXT:
-                    clean = self._clean_content(llm_event.content or "")
-                    logger.info(f"Response | {clean[:120]!r}{'...' if len(clean) > 120 else ''}")
-                    msg = AIMessage(
-                        content=clean, thinking=thinking, thinking_signature=thinking_signature
-                    )
-                    session.add_message(msg)
-                    return msg
-                case LLMEventType.ERROR:
-                    error_text = llm_event.error or "Unknown LLM error"
-                    logger.error(f"LLM error event | {error_text}")
-                    msg = AIMessage(content=f"Sorry, I encountered an error: {error_text}")
-                    session.add_message(msg)
-                    return msg
-        raise RuntimeError(f"Agent exceeded max_iterations ({self.max_iterations})")
+        return await self.loop.run(
+            session=session,
+            incoming_message=message,
+            build_messages=build_messages,
+        )
 
     async def _loop_stream(
         self,
@@ -535,7 +478,8 @@ class Agent:
                             logger.info(
                                 f"Response | {content[:120]!r}{'...' if len(content) > 120 else ''} usage={event.usage}"
                             )
-                            content = self._clean_content(content or "(no response)")
+                            from operator_use.agent.loop import AgentLoop
+                            content = AgentLoop._clean_content(content or "(no response)")
                             await self.hooks.emit(
                                 HookEvent.AFTER_LLM_CALL,
                                 AfterLLMCallContext(

@@ -4,7 +4,6 @@ import logging
 
 from pydantic import BaseModel, Field
 from operator_use.tools import Tool, ToolResult
-from operator_use.web.loop import LoopGuard
 
 
 class BrowserTask(BaseModel):
@@ -17,8 +16,7 @@ class BrowserTask(BaseModel):
 
 
 from operator_use.agent.tools import ToolRegistry
-from operator_use.messages import SystemMessage, HumanMessage, ToolMessage
-from operator_use.providers.events import LLMEventType
+from operator_use.messages import SystemMessage, HumanMessage
 
 logger = logging.getLogger(__name__)
 
@@ -111,18 +109,16 @@ async def browser_task(task: str, keep_open: bool = True, **kwargs) -> ToolResul
     from operator_use.web.plugin import BrowserPlugin
     from operator_use.web.tools.browser import browser as browser_tool
     from operator_use.agent.hooks.events import BeforeLLMCallContext
+    from operator_use.agent.loop import AgentLoop
+    from operator_use.web.loop import LoopGuard
 
-    # Reuse the persistent browser from BrowserPlugin if available.
     existing_browser: Browser | None = kwargs.get("_browser")
-
     if existing_browser is not None and existing_browser._client is not None:
         browser = existing_browser
         owns_browser = False
     else:
         import os
 
-        # Persistent profile so logins survive across sessions.
-        # Auto-launches Chrome with --remote-debugging-port if not already running.
         profile_dir = os.path.join(
             os.environ.get("LOCALAPPDATA", os.path.expanduser("~/.local/share")),
             "Operator",
@@ -142,72 +138,41 @@ async def browser_task(task: str, keep_open: bool = True, **kwargs) -> ToolResul
 
     await browser.ensure_open()
 
-    tools = registry.list_tools()
+    loop_guard = LoopGuard()
+
+    async def before_call(messages, iteration):
+        ctx = BeforeLLMCallContext(session=None, messages=messages, iteration=iteration)
+        await plugin._state_hook(ctx)
+        return ctx.messages
+
+    async def after_tool(tc, tr):
+        try:
+            page_state = await browser.get_state()
+            if page_state and page_state.current_tab:
+                loop_guard.record_page(page_state.current_tab.url, page_state.to_string())
+        except Exception as e:
+            logger.debug("[browser_task] Failed to capture page state for loop detection: %s", e)
+
+    agent_loop = AgentLoop(
+        llm=llm,
+        registry=registry,
+        max_iterations=MAX_ITERATIONS,
+        name="browser_task",
+        before_call=before_call,
+        after_tool=after_tool,
+        loop_guard=loop_guard,
+    )
+
     history = [
         SystemMessage(content=SYSTEM_PROMPT),
         HumanMessage(content=task),
     ]
 
-    result = f"(hit {MAX_ITERATIONS}-iteration limit without finishing)"
-    loop_guard = LoopGuard()
     try:
-        for iteration in range(MAX_ITERATIONS):
-            messages = list(history)
-            ctx = BeforeLLMCallContext(session=None, messages=messages, iteration=iteration)
-            await plugin._state_hook(ctx)
-
-            # Inject loop detection warnings if any
-            warning = loop_guard.check()
-            if warning:
-                messages.append(HumanMessage(content=f"[LoopGuard] {warning}"))
-
-            event = await llm.ainvoke(messages=messages, tools=tools)
-            match event.type:
-                case LLMEventType.TOOL_CALL:
-                    tc = event.tool_call
-                    logger.info(
-                        "[browser_task] iter=%d tool=%s params=%s", iteration, tc.name, tc.params
-                    )
-                    tr = await registry.aexecute(tc.name, tc.params)
-                    logger.info(
-                        "[browser_task] iter=%d result=%s",
-                        iteration,
-                        tr.output if tr.success else f"ERROR: {tr.error}",
-                    )
-
-                    # Record action for loop detection
-                    loop_guard.record_action(tc.name, tc.params, tr.success)
-
-                    # Record page state for stagnation/cycle detection
-                    try:
-                        page_state = await browser.get_state()
-                        if page_state and page_state.current_tab:
-                            loop_guard.record_page(
-                                page_state.current_tab.url, page_state.to_string()
-                            )
-                    except Exception as e:
-                        logger.debug(
-                            "[browser_task] Failed to capture page state for loop detection: %s", e
-                        )
-
-                    thinking_signature = event.thinking.signature if event.thinking else None
-                    history.append(
-                        ToolMessage(
-                            id=tc.id,
-                            name=tc.name,
-                            params=tc.params,
-                            content=tr.output if tr.success else tr.error,
-                            thinking_signature=thinking_signature,
-                        )
-                    )
-                case LLMEventType.TEXT:
-                    result = event.content or "(no result)"
-                    break
-
+        result = (await agent_loop.run(history)).content
     except Exception as e:
         logger.error("browser_task failed: %s", e, exc_info=True)
         return ToolResult.error_result(f"browser_task failed: {type(e).__name__}: {e}")
-
     finally:
         if owns_browser and not keep_open:
             try:

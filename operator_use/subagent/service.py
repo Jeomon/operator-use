@@ -36,10 +36,10 @@ from typing import TYPE_CHECKING
 
 from operator_use.agent.tools import ToolRegistry
 from operator_use.agent.tools import FILESYSTEM_TOOLS, WEB_TOOLS, TERMINAL_TOOLS
+from operator_use.agent.loop import AgentLoop
 from operator_use.bus import Bus, IncomingMessage
 from operator_use.bus.views import TextPart
-from operator_use.messages.service import SystemMessage, HumanMessage, ToolMessage
-from operator_use.providers.events import LLMEventType
+from operator_use.messages.service import SystemMessage, HumanMessage
 from operator_use.subagent.views import SubagentRecord
 
 if TYPE_CHECKING:
@@ -84,7 +84,6 @@ class Subagent:
         """
         logger.info(f"[{record.task_id}] subagent '{record.label}' started")
 
-        # Emit trace event for subagent run start
         if self.tracer:
             from operator_use.tracing import TraceEvent, TraceEventType
 
@@ -95,7 +94,6 @@ class Subagent:
                 subagent_task_id=record.task_id,
                 subagent_label=record.label,
             )
-            # Store the event so we can update it at the end
             self._trace_event = trace_event
 
         from operator_use.agent.tools import resolve_tools
@@ -114,8 +112,6 @@ class Subagent:
         registry.register_tools(tool_list)
         registry.set_extension("_llm", self.llm)
 
-        tools = registry.list_tools()
-
         system_prompt = (
             self.config.system_prompt
             if (self.config and self.config.system_prompt)
@@ -123,49 +119,29 @@ class Subagent:
         )
         max_iterations = self.config.max_iterations if self.config else DEFAULT_MAX_ITERATIONS
 
-        # Retry configuration
         retry_cfg = self.config.retry if self.config else None
         max_retries = retry_cfg.max_retries if retry_cfg else 0
         record.max_retries = max_retries
 
+        agent_loop = AgentLoop(
+            llm=self.llm,
+            registry=registry,
+            max_iterations=max_iterations,
+            name=f"subagent:{record.label}",
+        )
+
         result = "(no result)"
 
         for attempt in range(max_retries + 1):
-            # Reset history on each retry attempt
             history = [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=record.task),
             ]
 
             try:
-                for _ in range(max_iterations):
-                    messages = list(history)
-
-                    event = await self.llm.ainvoke(messages=messages, tools=tools)
-                    match event.type:
-                        case LLMEventType.TOOL_CALL:
-                            tc = event.tool_call
-                            tr = await registry.aexecute(tc.name, tc.params)
-                            history.append(
-                                ToolMessage(
-                                    id=tc.id,
-                                    name=tc.name,
-                                    params=tc.params,
-                                    content=tr.output if tr.success else tr.error,
-                                    thinking=event.thinking.content if event.thinking else None,
-                                    thinking_signature=event.thinking.signature
-                                    if event.thinking
-                                    else None,
-                                )
-                            )
-                        case LLMEventType.TEXT:
-                            result = event.content or "(no result)"
-                            break
-                else:
-                    result = f"(hit {max_iterations}-iteration limit without finishing)"
-
+                result = (await agent_loop.run(history)).content
                 record.status = "completed"
-                break  # Success — exit retry loop
+                break
 
             except asyncio.CancelledError:
                 logger.info(f"[{record.task_id}] subagent '{record.label}' cancelled")
@@ -176,7 +152,6 @@ class Subagent:
             except Exception as e:
                 record.retry_count = attempt
                 if attempt < max_retries:
-                    # Exponential backoff
                     delay = min(
                         retry_cfg.base_delay * (retry_cfg.backoff_factor**attempt),
                         retry_cfg.max_delay,
@@ -186,9 +161,7 @@ class Subagent:
                         f"retrying in {delay:.1f}s (attempt {attempt + 2}/{max_retries + 1})"
                     )
                     await asyncio.sleep(delay)
-                    # Continue to next retry iteration
                 else:
-                    # Final failure
                     logger.error(
                         f"[{record.task_id}] subagent '{record.label}' failed after {max_retries + 1} attempts: {e}",
                         exc_info=True,
@@ -203,11 +176,9 @@ class Subagent:
             f"[{record.task_id}] subagent '{record.label}' done — status={record.status} (attempt {record.retry_count + 1}/{max_retries + 1})"
         )
 
-        # Emit trace event for subagent run end
         if self.tracer and hasattr(self, "_trace_event"):
             from operator_use.tracing import TraceEventType
 
-            # Update the stored trace event with final info
             self._trace_event.finished_at = record.finished_at
             self._trace_event.subagent_status = record.status
             await self.tracer.emit_subagent(self._trace_event)

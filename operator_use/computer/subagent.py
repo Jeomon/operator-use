@@ -4,7 +4,6 @@ import logging
 
 from pydantic import BaseModel, Field
 from operator_use.tools import Tool, ToolResult
-from operator_use.web.loop import LoopGuard
 
 
 class ComputerTask(BaseModel):
@@ -14,8 +13,7 @@ class ComputerTask(BaseModel):
 
 
 from operator_use.agent.tools import ToolRegistry
-from operator_use.messages import SystemMessage, HumanMessage, ToolMessage
-from operator_use.providers.events import LLMEventType
+from operator_use.messages import SystemMessage, HumanMessage
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +85,8 @@ async def computer_task(task: str, **kwargs) -> ToolResult:
     from operator_use.computer.tools import COMPUTER_TOOL
     from operator_use.computer.plugin import ComputerPlugin
     from operator_use.agent.hooks.events import BeforeLLMCallContext
+    from operator_use.agent.loop import AgentLoop
+    from operator_use.web.loop import LoopGuard
 
     if COMPUTER_TOOL is None:
         return ToolResult.error_result("computer_task is not supported on this platform.")
@@ -97,61 +97,32 @@ async def computer_task(task: str, **kwargs) -> ToolResult:
     registry.register_tools([COMPUTER_TOOL])
     registry.set_extension("_llm", llm)
 
-    tools = registry.list_tools()
+    loop_guard = LoopGuard()
+
+    async def before_call(messages, iteration):
+        ctx = BeforeLLMCallContext(session=None, messages=messages, iteration=iteration)
+        await plugin._state_hook(ctx)
+        return ctx.messages
+
+    agent_loop = AgentLoop(
+        llm=llm,
+        registry=registry,
+        max_iterations=MAX_ITERATIONS,
+        name="computer_task",
+        before_call=before_call,
+        loop_guard=loop_guard,
+    )
+
     history = [
         SystemMessage(content=SYSTEM_PROMPT),
         HumanMessage(content=task),
     ]
 
-    result = f"(hit {MAX_ITERATIONS}-iteration limit without finishing)"
-    loop_guard = LoopGuard()
     try:
-        for iteration in range(MAX_ITERATIONS):
-            messages = list(history)
-            ctx = BeforeLLMCallContext(session=None, messages=messages, iteration=iteration)
-            await plugin._state_hook(ctx)
-
-            # Inject loop detection warnings if any
-            warning = loop_guard.check()
-            if warning:
-                messages.append(HumanMessage(content=f"[LoopGuard] {warning}"))
-
-            event = await llm.ainvoke(messages=messages, tools=tools)
-            match event.type:
-                case LLMEventType.TOOL_CALL:
-                    tc = event.tool_call
-                    logger.info(
-                        "[computer_task] iter=%d tool=%s params=%s", iteration, tc.name, tc.params
-                    )
-                    tr = await registry.aexecute(tc.name, tc.params)
-                    logger.info(
-                        "[computer_task] iter=%d result=%s",
-                        iteration,
-                        tr.output if tr.success else f"ERROR: {tr.error}",
-                    )
-
-                    # Record action for loop detection
-                    loop_guard.record_action(tc.name, tc.params, tr.success)
-                    # Note: no record_page for desktop (no URL/DOM equivalent)
-
-                    thinking_signature = event.thinking.signature if event.thinking else None
-                    history.append(
-                        ToolMessage(
-                            id=tc.id,
-                            name=tc.name,
-                            params=tc.params,
-                            content=tr.output if tr.success else tr.error,
-                            thinking_signature=thinking_signature,
-                        )
-                    )
-                case LLMEventType.TEXT:
-                    result = event.content or "(no result)"
-                    break
-
+        result = (await agent_loop.run(history)).content
     except Exception as e:
         logger.error("computer_task failed: %s", e, exc_info=True)
         return ToolResult.error_result(f"computer_task failed: {type(e).__name__}: {e}")
-
     finally:
         if plugin.watchdog is not None:
             try:
