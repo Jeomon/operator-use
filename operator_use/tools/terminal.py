@@ -3,9 +3,8 @@ from operator_use.config.paths import get_named_workspace_dir
 from pydantic import BaseModel, Field
 from pathlib import Path
 import asyncio
-import sys
 import os
-import signal
+import sys
 
 BLOCKED_COMMANDS = {
     "rm -rf /",
@@ -87,10 +86,10 @@ async def terminal(cmd: str, timeout: int = 10, cwd: str | None = None, **kwargs
     try:
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
-        if sys.platform != "win32":
-            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-        else:
-            process.kill()
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
         await process.wait()
         return ToolResult.error_result(f"Command timed out after {timeout} seconds")
 
