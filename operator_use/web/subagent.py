@@ -124,7 +124,12 @@ async def browser_task(task: str, keep_open: bool = True, **kwargs) -> ToolResul
             "Operator",
             "chrome-debug-profile",
         )
-        config = BrowserConfig(attach_to_existing=True, cdp_port=9222, user_data_dir=profile_dir)
+        config = BrowserConfig(
+            attach_to_existing=True,
+            cdp_port=9222,
+            user_data_dir=profile_dir,
+            headless=False
+        )
         browser = Browser(config=config)
         owns_browser = True
 
