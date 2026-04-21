@@ -126,8 +126,11 @@ async def computer_task(task: str, **kwargs) -> ToolResult:
     finally:
         if plugin.watchdog is not None:
             try:
-                plugin.watchdog.stop()
+                if plugin.watchdog.is_running:
+                    plugin.watchdog.stop()
             except Exception:
-                pass
+                logger.debug("Failed to stop watchdog during shutdown (may have already crashed)")
+            finally:
+                plugin.watchdog = None
 
     return ToolResult.success_result(result)

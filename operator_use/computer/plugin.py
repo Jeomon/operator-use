@@ -114,7 +114,10 @@ class ComputerPlugin(Plugin):
                 )
             if self.watchdog is None:
                 self.watchdog = WatchDog()
-                self.watchdog.start()
+                try:
+                    self.watchdog.start()
+                except Exception as e:
+                    logger.warning(f"Watchdog failed to start (non-fatal): {e}. Continuing without event monitoring.")
         elif sys.platform == "darwin":
             from operator_use.computer.macos.desktop.service import Desktop
             from operator_use.computer.macos.watchdog.service import WatchDog
@@ -123,7 +126,10 @@ class ComputerPlugin(Plugin):
                 self.desktop = Desktop()
             if self.watchdog is None:
                 self.watchdog = WatchDog()
-                self.watchdog.start()
+                try:
+                    self.watchdog.start()
+                except Exception as e:
+                    logger.warning(f"Watchdog failed to start (non-fatal): {e}. Continuing without event monitoring.")
 
     # ------------------------------------------------------------------
     # Hook handlers
