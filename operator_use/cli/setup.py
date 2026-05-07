@@ -566,9 +566,9 @@ def _save_config(
     from operator_use.cli.start import write_identity_md, _resolve_agent_profile
 
     for defn in agent_list:
-        ws_path = _resolve_agent_profile(defn)
-        ws_path.mkdir(parents=True, exist_ok=True)
-        write_identity_md(ws_path, defn, local_agents=agent_list, acp_agents=acp_agents)
+        profile_path = _resolve_agent_profile(defn)
+        profile_path.mkdir(parents=True, exist_ok=True)
+        write_identity_md(profile_path, defn, local_agents=agent_list, acp_agents=acp_agents)
 
 
 def run_first_install():

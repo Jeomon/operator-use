@@ -239,9 +239,9 @@ def _make_models(
     return llm, _make_stt(config), _make_tts(config)
 
 
-def _resolve_agent_workspace(defn: AgentDefinition) -> Path:
-    if defn.workspace:
-        return Path(defn.workspace).expanduser().resolve()
+def _resolve_agent_profile(defn: AgentDefinition) -> Path:
+    if defn.profile:
+        return Path(defn.profile).expanduser().resolve()
     return get_named_profile_dir(defn.id)
 
 
@@ -287,7 +287,7 @@ def _build_agents(
             raise ValueError(
                 f"Agent '{defn.id}': failed to initialize LLM provider '{llm_conf.provider}'. Check the provider name and API key."
             )
-        workspace = _resolve_agent_workspace(defn)
+        profile = _resolve_agent_profile(defn)
 
         plugins = []
         for p in defn.plugins:
@@ -310,7 +310,7 @@ def _build_agents(
             llm=llm,
             agent_id=defn.id,
             description=defn.description,
-            workspace=workspace,
+            profile=profile,
             max_iterations=defn.max_tool_iterations or defaults.max_tool_iterations,
             cron=cron,
             gateway=gateway,
@@ -375,26 +375,26 @@ def _build_router(config: Config):
     return router
 
 
-def copy_templates_to_workspace(user_data_dir: Path, workspace: Path) -> None:
-    """Copy template files to workspace, skipping files that already exist."""
+def copy_templates_to_profile(user_data_dir: Path, profile: Path) -> None:
+    """Copy template files to profile, skipping files that already exist."""
     template_dir = Path(operator_use.__file__).resolve().parent / "templates"
 
     if not template_dir.exists():
         return
 
-    (workspace / "skills").mkdir(parents=True, exist_ok=True)
-    (workspace / "knowledge").mkdir(parents=True, exist_ok=True)
-    (workspace / "tools").mkdir(parents=True, exist_ok=True)
+    (profile / "skills").mkdir(parents=True, exist_ok=True)
+    (profile / "knowledge").mkdir(parents=True, exist_ok=True)
+    (profile / "tools").mkdir(parents=True, exist_ok=True)
 
     for src in template_dir.iterdir():
         if src.is_file():
-            dest = workspace / src.name
+            dest = profile / src.name
             if dest.exists():
                 continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
         elif src.is_dir():
-            dest_dir = workspace / src.name
+            dest_dir = profile / src.name
             dest_dir.mkdir(parents=True, exist_ok=True)
             for f in src.iterdir():
                 if f.is_file():
@@ -404,7 +404,7 @@ def copy_templates_to_workspace(user_data_dir: Path, workspace: Path) -> None:
 
 
 def write_identity_md(
-    workspace: Path,
+    profile: Path,
     defn: "AgentDefinition",
     local_agents: "list[AgentDefinition] | None" = None,
     acp_agents: "dict | None" = None,
@@ -412,7 +412,7 @@ def write_identity_md(
     """Write (or update) IDENTITY.md from the AgentDefinition in config."""
     from datetime import date
 
-    identity_path = workspace / "IDENTITY.md"
+    identity_path = profile / "IDENTITY.md"
 
     # Preserve birthday on updates
     birthday = date.today().strftime("%d/%m/%Y")
@@ -442,7 +442,7 @@ def write_identity_md(
 
     enabled_plugins = [p.id for p in defn.plugins if p.enabled]
 
-    skills_dir = workspace / "skills"
+    skills_dir = profile / "skills"
     skill_names = sorted(d.name for d in skills_dir.iterdir() if d.is_dir()) if skills_dir.exists() else []
 
     content = (
@@ -479,7 +479,7 @@ def write_identity_md(
                 lines.append(f"- Name: {name}  Description: {desc}  Plugins: {caps_str}  URL: {url}")
         content += "\n".join(lines) + "\n"
 
-    workspace.mkdir(parents=True, exist_ok=True)
+    profile.mkdir(parents=True, exist_ok=True)
     identity_path.write_text(content, encoding="utf-8")
 
 
@@ -574,12 +574,12 @@ async def main():
         print("Error: No config.json found. Please run 'uv run main.py onboard' first.")
         return
 
-    # Copy templates for each defined agent workspace
+    # Copy templates for each defined agent profile
     if not config.agents.list:
         print("Error: No agents defined in config. Run 'operator onboard' to set up an agent.")
         return
     for defn in config.agents.list:
-        copy_templates_to_workspace(USERDATA_DIR, workspace=_resolve_agent_workspace(defn))
+        copy_templates_to_profile(USERDATA_DIR, profile=_resolve_agent_profile(defn))
 
     bus = Bus()
     _restart_file = USERDATA_DIR / "restart.json"
@@ -795,8 +795,8 @@ async def main():
             chat_id="heartbeat",
         )
 
-    first_agent_workspace = _resolve_agent_workspace(config.agents.list[0])
-    heartbeat = Heartbeat(workspace=first_agent_workspace, on_heartbeat=on_heartbeat)
+    first_agent_profile = _resolve_agent_profile(config.agents.list[0])
+    heartbeat = Heartbeat(profile=first_agent_profile, on_heartbeat=on_heartbeat)
 
     shared_channels = []
     if stdio_enabled:

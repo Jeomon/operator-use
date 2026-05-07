@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def _get_profile_root(**kwargs) -> Path:
-    return kwargs.get("_profile") or kwargs.get("_workspace") or get_named_profile_dir("operator")
+    return kwargs.get("_profile") or get_named_profile_dir("operator")
 
 
 class ReadFile(BaseModel):

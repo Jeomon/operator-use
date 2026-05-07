@@ -50,7 +50,7 @@ async def skill(
     **kwargs,
 ) -> ToolResult:
     """Load and present a skill from profile or builtin skills."""
-    profile_root = kwargs.get("_profile") or kwargs.get("_workspace") or get_named_profile_dir("operator")
+    profile_root = kwargs.get("_profile") or get_named_profile_dir("operator")
 
     # Use Skills service to load from profile or builtin
     skills_service = Skills(profile_root)

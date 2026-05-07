@@ -1055,8 +1055,8 @@ def agent_repl(
         _make_tts,
         _make_search,
         _make_image,
-        copy_templates_to_workspace,
-        _resolve_agent_workspace,
+        copy_templates_to_profile,
+        _resolve_agent_profile,
         setup_logging,
     )
     from operator_use.config import load_config
@@ -1087,8 +1087,8 @@ def agent_repl(
     else:
         defn = config.agents.list[0]
 
-    workspace = _resolve_agent_workspace(defn)
-    copy_templates_to_workspace(USERDATA_DIR, workspace=workspace)
+    profile = _resolve_agent_profile(defn)
+    copy_templates_to_profile(USERDATA_DIR, profile=profile)
 
     bus = Bus()
     cron_store = USERDATA_DIR / "crons.json"
@@ -1260,7 +1260,7 @@ def agents_list():
         raise typer.Exit(1)
 
     from operator_use.config import load_config
-    from operator_use.cli.start import _resolve_agent_workspace
+    from operator_use.cli.start import _resolve_agent_profile
 
     config = load_config(USERDATA_DIR)
     agent_defs = config.agents.list or []
@@ -1277,10 +1277,10 @@ def agents_list():
     table.add_column("LLM")
 
     for defn in agent_defs:
-        workspace = str(_resolve_agent_workspace(defn))
+        profile = str(_resolve_agent_profile(defn))
         llm = defn.llm_config
         llm_label = f"{llm.provider} / {llm.model}" if llm else "not configured"
-        table.add_row(defn.id, workspace, llm_label)
+        table.add_row(defn.id, profile, llm_label)
 
     console.print(table)
 
@@ -1288,11 +1288,10 @@ def agents_list():
 @agents_app.command("add")
 def agents_add(
     agent_id: str = typer.Argument(..., help="Agent ID (e.g. 'work', 'personal')."),
-    workspace: str = typer.Option(
+    profile: str = typer.Option(
         "",
-        "--workspace",
-        "-w",
         "--profile",
+        "-w",
         help="Custom profile path (default: ~/.operator-use/profiles/<id>).",
     ),
     description: str = typer.Option("", "--description", "-d", help="Short role/purpose summary for this agent."),
@@ -1315,17 +1314,17 @@ def agents_add(
     ),
 ):
     """Add a new agent and create its profile directory."""
-    from operator_use.cli.start import copy_templates_to_workspace, _resolve_agent_workspace, write_identity_md
+    from operator_use.cli.start import copy_templates_to_profile, _resolve_agent_profile, write_identity_md
     from operator_use.config import AgentDefinition, LLMConfig, load_config
 
     defn = AgentDefinition(
         id=agent_id,
         description=description,
-        workspace=workspace or None,
+        profile=profile or None,
         llm_config=LLMConfig(provider=provider, model=model) if provider and model else None,
     )
-    ws_path = _resolve_agent_workspace(defn)
-    copy_templates_to_workspace(USERDATA_DIR, workspace=ws_path)
+    profile_path = _resolve_agent_profile(defn)
+    copy_templates_to_profile(USERDATA_DIR, profile=profile_path)
 
     try:
         existing_config = load_config(USERDATA_DIR)
@@ -1336,7 +1335,7 @@ def agents_add(
         acp_agents = {}
 
     # Write new agent's IDENTITY.md before config save
-    write_identity_md(ws_path, defn, local_agents=local_agents, acp_agents=acp_agents)
+    write_identity_md(profile_path, defn, local_agents=local_agents, acp_agents=acp_agents)
 
     def mutate(data: dict):
         agents = data.setdefault("agents", {})
@@ -1347,8 +1346,8 @@ def agents_add(
         entry: dict = {"id": agent_id}
         if description:
             entry["description"] = description
-        if workspace:
-            entry["workspace"] = workspace
+        if profile:
+            entry["profile"] = profile
         if provider and model:
             entry["llmConfig"] = {"provider": provider, "model": model}
         if prompt_mode:
@@ -1372,11 +1371,11 @@ def agents_add(
     try:
         config = load_config(USERDATA_DIR)
         for a in config.agents.list:
-            write_identity_md(_resolve_agent_workspace(a), a, local_agents=config.agents.list, acp_agents=config.acp_agents)
+            write_identity_md(_resolve_agent_profile(a), a, local_agents=config.agents.list, acp_agents=config.acp_agents)
     except Exception:
         pass
 
-    console.print(f"[green]Agent '{agent_id}' added.[/green] Profile: {ws_path}")
+    console.print(f"[green]Agent '{agent_id}' added.[/green] Profile: {profile_path}")
 
 
 @agents_app.command("update")
@@ -1391,7 +1390,7 @@ def agents_update(
 ):
     """Update an existing agent's configuration and regenerate its IDENTITY.md."""
     from operator_use.config import load_config
-    from operator_use.cli.start import write_identity_md, _resolve_agent_workspace
+    from operator_use.cli.start import write_identity_md, _resolve_agent_profile
 
     def mutate(data: dict):
         lst = data.get("agents", {}).get("list", [])
@@ -1420,8 +1419,8 @@ def agents_update(
     try:
         config = load_config(USERDATA_DIR)
         for defn in config.agents.list:
-            ws_path = _resolve_agent_workspace(defn)
-            write_identity_md(ws_path, defn, local_agents=config.agents.list, acp_agents=config.acp_agents)
+            profile_path = _resolve_agent_profile(defn)
+            write_identity_md(profile_path, defn, local_agents=config.agents.list, acp_agents=config.acp_agents)
     except Exception as e:
         console.print(f"[yellow]Config saved but IDENTITY.md update failed: {e}[/yellow]")
 
@@ -1431,17 +1430,17 @@ def agents_update(
 @agents_app.command("remove")
 def agents_remove(
     agent_id: str = typer.Argument(..., help="Agent ID to remove."),
-    delete_workspace: bool = typer.Option(
-        False, "--delete-profile", "--delete-workspace", "-d", help="Also delete the profile directory."
+    delete_profile: bool = typer.Option(
+        False, "--delete-profile", "-d", help="Also delete the profile directory."
     ),
 ):
     """Remove an agent from config and optionally delete its profile directory."""
     from operator_use.config import load_config
-    from operator_use.cli.start import _resolve_agent_workspace
+    from operator_use.cli.start import _resolve_agent_profile
 
     config = load_config(USERDATA_DIR)
     defn = next((a for a in config.agents.list if a.id == agent_id), None)
-    ws_path = _resolve_agent_workspace(defn) if defn else None
+    profile_path = _resolve_agent_profile(defn) if defn else None
 
     def mutate(data: dict):
         lst = data.get("agents", {}).get("list", [])
@@ -1454,13 +1453,13 @@ def agents_remove(
 
     _load_and_save_config(mutate)
 
-    if delete_workspace and ws_path and ws_path.exists():
+    if delete_profile and profile_path and profile_path.exists():
         import shutil
 
-        shutil.rmtree(ws_path)
-        console.print(f"[green]Agent '{agent_id}' removed.[/green] Profile deleted: {ws_path}")
+        shutil.rmtree(profile_path)
+        console.print(f"[green]Agent '{agent_id}' removed.[/green] Profile deleted: {profile_path}")
     else:
-        console.print(f"[green]Agent '{agent_id}' removed.[/green] Profile kept: {ws_path}")
+        console.print(f"[green]Agent '{agent_id}' removed.[/green] Profile kept: {profile_path}")
 
 
 # ---------------------------------------------------------------------------

@@ -10,16 +10,16 @@ BUILTIN_SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
 
 
 class Skills:
-    def __init__(self, workspace: Path, builtin_skills_dir: Path | None = None):
-        self.workspace = workspace
-        self.workspace_skills = workspace / "skills"
+    def __init__(self, profile: Path, builtin_skills_dir: Path | None = None):
+        self.profile = profile
+        self.profile_skills = profile / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
         self._summary_cache: str | None = None
 
     def list_skills(self) -> list[str]:
         skills = []
-        if self.workspace_skills.exists():
-            for skill_dir in self.workspace_skills.iterdir():
+        if self.profile_skills.exists():
+            for skill_dir in self.profile_skills.iterdir():
                 if not skill_dir.is_dir():
                     continue
                 skill_file = skill_dir / "SKILL.md"
@@ -29,7 +29,7 @@ class Skills:
                     {
                         "name": skill_dir.name,
                         "path": skill_dir,
-                        "source": "workspace",
+                        "source": "profile",
                     }
                 )
         if self.builtin_skills.exists():
@@ -49,9 +49,9 @@ class Skills:
         return skills
 
     def load_skill_content(self, name: str) -> str | None:
-        workspace_skill = self.workspace_skills / name / "SKILL.md"
-        if workspace_skill.exists():
-            return workspace_skill.read_text(encoding="utf-8")
+        profile_skill = self.profile_skills / name / "SKILL.md"
+        if profile_skill.exists():
+            return profile_skill.read_text(encoding="utf-8")
 
         builtin_skill = self.builtin_skills / name / "SKILL.md"
         if builtin_skill.exists():
@@ -62,7 +62,7 @@ class Skills:
     def invoke_skill(self, name: str) -> str | None:
         content = self.load_skill_content(name)
         if content is not None:
-            source = "workspace" if (self.workspace_skills / name / "SKILL.md").exists() else "builtin"
+            source = "profile" if (self.profile_skills / name / "SKILL.md").exists() else "builtin"
             logger.info(f"Skill invoked | name={name} source={source}")
         return content
 
@@ -142,7 +142,7 @@ class Skills:
         """Register a BEFORE_TOOL_CALL hook that snapshots skills before write_file/edit_file."""
         from operator_use.agent.hooks.events import HookEvent
 
-        workspace = self.workspace
+        profile = self.profile
 
         async def _skill_history(ctx) -> None:
             if ctx.tool_call.name not in ("write_file", "edit_file"):
@@ -152,7 +152,7 @@ class Skills:
                 return
             p = Path(path_param)
             if not p.is_absolute():
-                p = workspace / p
+                p = profile / p
             # Match pattern: .../skills/{name}/SKILL.md
             if p.name == "SKILL.md" and p.parent.parent.name == "skills":
                 self.snapshot(p)

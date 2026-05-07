@@ -14,9 +14,9 @@ from operator_use.session.views import Session
 class SessionManager:
     """Manager for sessions, keyed by session id. Persists to JSONL files."""
 
-    def __init__(self, workspace: Path):
-        self.workspace = Path(workspace)
-        self.sessions_dir = ensure_directory(self.workspace / "sessions")
+    def __init__(self, profile: Path):
+        self.profile = Path(profile)
+        self.sessions_dir = ensure_directory(self.profile / "sessions")
         self._sessions: dict[str, Session] = {}
 
     def _session_id_to_filename(self, session_id: str) -> str:

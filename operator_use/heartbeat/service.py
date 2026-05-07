@@ -23,24 +23,24 @@ class Heartbeat:
 
     def __init__(
         self,
-        workspace: Path,
+        profile: Path,
         interval: float = HEARTBEAT_INTERVAL,
         on_heartbeat: Callable[[str], Awaitable[None]] | None = None,
     ):
         """
         Args:
-            workspace: Agent profile directory containing HEARTBEAT.md.
+            profile: Agent profile directory containing HEARTBEAT.md.
             interval: Seconds between ticks (default 1800 = 30 minutes).
             on_heartbeat: Optional async callback called with markdown content on each heartbeat.
         """
-        self.workspace = workspace
+        self.profile = profile
         self.interval = interval
         self.on_heartbeat = on_heartbeat
         self._task: asyncio.Task[None] | None = None
         self._running = False
 
     def _heartbeat_path(self) -> Path:
-        return self.workspace / HEARTBEAT_FILENAME
+        return self.profile / HEARTBEAT_FILENAME
 
     def _read_content(self) -> str:
         """Read HEARTBEAT.md content. Returns empty string if file does not exist."""

@@ -24,10 +24,6 @@ def get_named_profile_dir(name: str) -> Path:
     return get_profiles_dir() / name
 
 
-def get_named_workspace_dir(name: str) -> Path:
-    """Backward-compatible alias for get_named_profile_dir()."""
-    return get_named_profile_dir(name)
-
 
 def get_media_dir() -> Path:
     """Return the media storage directory: ~/.operator-use/media"""

@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 
 class Agent:
-    """Runs the LLM agentic loop for a single workspace/persona.
+    """Runs the LLM agentic loop for a single profile/persona.
 
     Receives pre-built HumanMessage/ImageMessage from the Orchestrator via
     run() and returns an AIMessage. Has no knowledge of channels, STT, TTS,
@@ -53,7 +53,7 @@ class Agent:
         llm: "BaseChatLLM",
         agent_id: str = "operator",
         description: str = "",
-        workspace: Path | None = None,
+        profile: Path | None = None,
         sessions: SessionManager | None = None,
         max_iterations: int = 100,
         userdata_dir: Path | None = None,
@@ -74,13 +74,13 @@ class Agent:
     ):
         self.agent_id = agent_id
         self.description = description
-        if workspace is None:
+        if profile is None:
             from operator_use.config.paths import get_named_profile_dir
 
-            workspace = get_named_profile_dir("operator")
-        self.workspace = workspace
-        self.sessions = sessions or SessionManager(workspace=self.workspace)
-        self.context = Context(workspace=self.workspace, mcp_servers=mcp_servers)
+            profile = get_named_profile_dir("operator")
+        self.profile = profile
+        self.sessions = sessions or SessionManager(profile=self.profile)
+        self.context = Context(profile=self.profile, mcp_servers=mcp_servers)
         self.tool_register = ToolRegistry()
         self.max_iterations = max_iterations
         self.llm = llm
@@ -104,15 +104,13 @@ class Agent:
         if exclude_tools:
             self.tool_register.unregister_tools(exclude_tools)
 
-        self.tool_register.register_profile_tools(self.workspace / "tools")
+        self.tool_register.register_profile_tools(self.profile / "tools")
 
         self.context.skills.register_history_hook(self.hooks)
         self.context.interceptor.register_history_hook(self.hooks)
 
         # Set stable tool extensions (don't change per message)
-        self.tool_register.set_extension("_profile", self.workspace)
-        # Backward-compatible extension key used by existing tools.
-        self.tool_register.set_extension("_workspace", self.workspace)
+        self.tool_register.set_extension("_profile", self.profile)
         self.tool_register.set_extension("_bus", self.bus)
         self.tool_register.set_extension("_gateway", self.gateway)
         self.tool_register.set_extension("_cron", self.cron)

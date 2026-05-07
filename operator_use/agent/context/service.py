@@ -25,12 +25,12 @@ class PromptMode(str, Enum):
 class Context:
     """Builds conversation context: system prompt + message history."""
 
-    def __init__(self, workspace: Path, mcp_servers: dict | None = None):
-        self.workspace = workspace
+    def __init__(self, profile: Path, mcp_servers: dict | None = None):
+        self.profile = profile
         self.codebase = Path(operator_use.__file__).resolve().parent.parent
-        self.skills = Skills(self.workspace)
-        self.memory = Memory(self.workspace)
-        self.knowledge = Knowledge(self.workspace)
+        self.skills = Skills(self.profile)
+        self.memory = Memory(self.profile)
+        self.knowledge = Knowledge(self.profile)
         self.mcp_servers = mcp_servers or {}
         from operator_use.config.paths import get_userdata_dir
 
@@ -71,9 +71,9 @@ class Context:
         )
 
     def _build_profile_context(self) -> str:
-        workspace_path = self.workspace.expanduser().resolve().as_posix()
+        profile_path = self.profile.expanduser().resolve().as_posix()
         return (
-            f"## Profile: {workspace_path}\n\n"
+            f"## Profile: {profile_path}\n\n"
             f"- HEARTBEAT.md — periodic maintenance tasks\n"
             f"- memory/MEMORY.md — long-term memory (write here to remember things)\n"
             f"- memory/YYYY-MM-DD.md — daily session log (append during sessions)\n"
@@ -86,7 +86,7 @@ class Context:
     def _load_bootstrap_files(self) -> list[str]:
         parts = []
         for filename in BOOTSTRAP_FILENAMES:
-            path = self.workspace / filename
+            path = self.profile / filename
             if path.exists():
                 content = path.read_text(encoding="utf-8")
                 if not content:

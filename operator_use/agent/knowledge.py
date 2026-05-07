@@ -17,8 +17,8 @@ class Knowledge:
        knowledge/company.md                    → name: "company"
     """
 
-    def __init__(self, workspace: Path) -> None:
-        self.knowledge_dir = workspace / "knowledge"
+    def __init__(self, profile: Path) -> None:
+        self.knowledge_dir = profile / "knowledge"
 
     def list_files(self) -> list[dict]:
         if not self.knowledge_dir.exists():

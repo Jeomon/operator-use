@@ -182,7 +182,7 @@ class PatchFile(BaseModel):
     model=PatchFile,
 )
 async def patch_file(path: str, patch: str, **kwargs) -> ToolResult:
-    profile_root = kwargs.get("_profile") or kwargs.get("_workspace") or "."
+    profile_root = kwargs.get("_profile") or "."
     resolved_path = resolve(base=profile_root, path=path)
 
     if not resolved_path.exists():

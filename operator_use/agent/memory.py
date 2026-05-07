@@ -3,9 +3,9 @@ from pathlib import Path
 
 
 class Memory:
-    def __init__(self, workspace: Path) -> None:
-        self.workspace = workspace
-        self.memory_dir = workspace / "memory"
+    def __init__(self, profile: Path) -> None:
+        self.profile = profile
+        self.memory_dir = profile / "memory"
         self.memory_file = self.memory_dir / "MEMORY.md"
 
     def _daily_log_path(self, date: str) -> Path:

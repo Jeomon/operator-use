@@ -68,7 +68,7 @@ async def terminal(cmd: str, timeout: int = 10, cwd: str | None = None, **kwargs
     else:
         shell_cmd = ["/bin/bash", "-c", cmd]
 
-    profile_root = kwargs.get("_profile") or kwargs.get("_workspace") or "."
+    profile_root = kwargs.get("_profile") or "."
     if cwd:
         resolved = Path(cwd) if Path(cwd).is_absolute() else Path(profile_root) / cwd
         cwd = str(resolved)

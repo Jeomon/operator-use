@@ -97,7 +97,7 @@ async def imagegen(
 
     # Build output path inside profile if not provided
     if not output_path:
-        profile_root: Path | None = kwargs.get("_profile") or kwargs.get("_workspace")
+        profile_root: Path | None = kwargs.get("_profile")
         if profile_root:
             gen_dir = profile_root / "generated"
         else:

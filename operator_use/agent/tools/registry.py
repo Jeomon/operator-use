@@ -64,10 +64,6 @@ class ToolRegistry:
             except Exception as e:
                 logger.warning(f"Failed to load profile tool | file={path.name} error={e}")
 
-    def register_workspace_tools(self, tools_dir: Path, skip_existing: bool = True) -> None:
-        """Backward-compatible alias for register_profile_tools()."""
-        self.register_profile_tools(tools_dir=tools_dir, skip_existing=skip_existing)
-
     def list_tools(self) -> list[Tool]:
         """Return all registered tools."""
         return list(self._tools.values())
