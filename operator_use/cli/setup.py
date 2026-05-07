@@ -540,9 +540,7 @@ def _save_config(
     operator_use_dir.mkdir(parents=True, exist_ok=True)
     config_path = operator_use_dir / "config.json"
     with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(
-            config_obj.model_dump(by_alias=True, exclude_none=True), f, indent=4, ensure_ascii=False
-        )
+        json.dump(config_obj.model_dump_clean(), f, indent=4, ensure_ascii=False)
 
     from operator_use.config.paths import get_auth_file
     from operator_use.auth import AuthStore

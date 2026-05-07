@@ -13,6 +13,29 @@ class Base(BaseModel):
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
+    def model_dump_clean(self, **kwargs) -> dict:
+        """Like model_dump but strips None, empty strings, and empty lists/dicts."""
+        raw = self.model_dump(by_alias=True, exclude_none=True, **kwargs)
+        return _strip_empty(raw)
+
+
+def _strip_empty(obj):
+    if isinstance(obj, dict):
+        return {k: _strip_empty(v) for k, v in obj.items() if not _is_empty(v)}
+    if isinstance(obj, list):
+        return [_strip_empty(i) for i in obj]
+    return obj
+
+
+def _is_empty(v) -> bool:
+    if v is None:
+        return True
+    if isinstance(v, str) and v == "":
+        return True
+    if isinstance(v, (list, dict)) and len(v) == 0:
+        return True
+    return False
+
 
 class TelegramConfig(Base):
     """Telegram channel configuration."""
@@ -289,6 +312,10 @@ class HeartbeatConfig(Base):
 
 class Config(BaseSettings):
     """Root configuration for Operator."""
+
+    def model_dump_clean(self, **kwargs) -> dict:
+        raw = self.model_dump(by_alias=True, exclude_none=True, **kwargs)
+        return _strip_empty(raw)
 
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     bindings: List[AgentRouteBinding] = Field(default_factory=list)
